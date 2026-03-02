@@ -22,6 +22,12 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw createAbortError();
 }
 
+async function yieldToUi(signal = null) {
+  // Let click/touch handlers run between OCR units of work.
+  await new Promise(resolve => setTimeout(resolve, 0));
+  throwIfAborted(signal);
+}
+
 async function fetchWithTimeout(url, options = {}, timeoutMs = 0, signal = null) {
   const controller = new AbortController();
   let timeoutId = null;
@@ -82,6 +88,7 @@ export async function extractBook(blob, onProgress, options = {}) {
   const allHtml = [];
 
   for (let i = 1; i <= totalPages; i++) {
+    await yieldToUi(signal);
     throwIfAborted(signal);
     if (onProgress) onProgress(i, totalPages, 'extract');
 
@@ -125,6 +132,7 @@ export async function extractBook(blob, onProgress, options = {}) {
 
 // OCR: try server first, fall back to client-side Tesseract.js
 async function ocrPages(pdf, totalPages, onProgress, signal = null) {
+  await yieldToUi(signal);
   throwIfAborted(signal);
   const serverUrl = localStorage.getItem('kindleish:ocr-server') || '';
 
@@ -142,6 +150,7 @@ async function ocrPages(pdf, totalPages, onProgress, signal = null) {
 
 // Server-side OCR: send each page image to the server
 async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal = null) {
+  await yieldToUi(signal);
   throwIfAborted(signal);
   if (onProgress) onProgress(0, totalPages, 'ocr-loading');
   const sessionId = `ocr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -158,6 +167,7 @@ async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal = n
 
   async function runWorker() {
     while (true) {
+      await yieldToUi(signal);
       const pageNum = nextPage;
       nextPage += 1;
       if (pageNum > totalPages) break;
@@ -213,6 +223,7 @@ async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal = n
 
 // Client-side OCR using Tesseract.js (fallback)
 async function ocrPagesClient(pdf, totalPages, onProgress, signal = null) {
+  await yieldToUi(signal);
   throwIfAborted(signal);
   if (onProgress) onProgress(0, totalPages, 'ocr-loading');
 
@@ -230,6 +241,7 @@ async function ocrPagesClient(pdf, totalPages, onProgress, signal = null) {
 
   try {
     for (let i = 1; i <= totalPages; i++) {
+      await yieldToUi(signal);
       throwIfAborted(signal);
       if (onProgress) onProgress(i, totalPages, 'ocr');
 

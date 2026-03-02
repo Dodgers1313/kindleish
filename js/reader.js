@@ -430,6 +430,10 @@ if ('serviceWorker' in navigator) {
 }
 
 extractCancel.addEventListener('click', cancelExtraction);
+extractCancel.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  cancelExtraction();
+}, { passive: false });
 
 // Start
 init();
