@@ -10,6 +10,7 @@ import { initProgress, saveCurrentPosition, restorePosition } from './modules/pr
 // DOM elements
 const readerLoading = document.getElementById('reader-loading');
 const extractProgress = document.getElementById('extract-progress');
+const extractCancel = document.getElementById('extract-cancel');
 const viewport = document.getElementById('viewport');
 const contentContainer = document.getElementById('content-container');
 const progressBar = document.getElementById('progress-bar');
@@ -32,12 +33,26 @@ const fontSizeValue = document.getElementById('font-size-value');
 let chromeVisible = false;
 let settingsVisible = false;
 let bookId = null;
+let extractionAbortController = null;
+let extractionCancelled = false;
 
 // Scanned PDF state
 let scannedMode = false;
 let scannedPageCount = 0;
 let scannedCurrentPage = 1;
 let bookBlob = null;
+
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.message === 'Operation canceled';
+}
+
+function cancelExtraction() {
+  if (!extractionAbortController) return;
+  extractionCancelled = true;
+  extractProgress.textContent = 'Canceling...';
+  extractCancel.disabled = true;
+  extractionAbortController.abort();
+}
 
 async function init() {
   // Get book ID from URL
@@ -67,6 +82,10 @@ async function init() {
   let html = book.extractedHtml;
   if (!html) {
     extractProgress.textContent = 'Extracting text...';
+    extractCancel.classList.remove('hidden');
+    extractCancel.disabled = false;
+    extractionAbortController = new AbortController();
+    extractionCancelled = false;
     try {
       html = await extractBook(book.blob, (current, total, phase) => {
         if (phase === 'ocr-loading') {
@@ -76,7 +95,7 @@ async function init() {
         } else {
           extractProgress.textContent = `Scanning page ${current} of ${total}...`;
         }
-      });
+      }, { signal: extractionAbortController.signal });
       // Save extraction result (non-fatal if it fails)
       try {
         await saveExtractedHtml(bookId, html);
@@ -84,6 +103,10 @@ async function init() {
         console.warn('Could not cache extraction result:', saveErr);
       }
     } catch (err) {
+      if (extractionCancelled || isAbortError(err)) {
+        window.location.href = 'index.html';
+        return;
+      }
       console.error('Extraction failed:', err);
       extractProgress.textContent = 'Could not extract text from this PDF.';
       setTimeout(() => {
@@ -92,6 +115,9 @@ async function init() {
         }
       }, 500);
       return;
+    } finally {
+      extractionAbortController = null;
+      extractCancel.classList.add('hidden');
     }
   }
 
@@ -402,6 +428,8 @@ function wireControls() {
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
+
+extractCancel.addEventListener('click', cancelExtraction);
 
 // Start
 init();

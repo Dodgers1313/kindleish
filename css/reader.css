@@ -438,6 +438,24 @@
   color: var(--text-secondary);
 }
 
+.extract-cancel {
+  margin-top: 6px;
+  padding: 8px 18px;
+  border-radius: 10px;
+  background: var(--chrome-border);
+  color: var(--text-color);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.extract-cancel:disabled {
+  opacity: 0.6;
+}
+
+.extract-cancel.hidden {
+  display: none;
+}
+
 /* Scanned PDF pages (on-demand rendered) */
 .scanned-page {
   height: calc(100dvh - 40px);

@@ -8,25 +8,81 @@ let cachedPdf = null;
 // e.g. 'http://your-oracle-ip:5000' or 'https://ocr.yourdomain.com'
 const OCR_SERVER = localStorage.getItem('kindleish:ocr-server') || '';
 
-async function loadPdf(arrayBuffer) {
+function createAbortError() {
+  const err = new Error('Operation canceled');
+  err.name = 'AbortError';
+  return err;
+}
+
+function isAbortError(err) {
+  return err?.name === 'AbortError';
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw createAbortError();
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 0, signal = null) {
+  const controller = new AbortController();
+  let timeoutId = null;
+  let timedOut = false;
+
+  const handleAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) throw createAbortError();
+    signal.addEventListener('abort', handleAbort, { once: true });
+  }
+
+  if (timeoutMs > 0) {
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+  }
+
   try {
-    return await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  } catch (e) {
-    console.warn('PDF.js worker failed, retrying without worker:', e);
-    pdfjsLib.GlobalWorkerOptions.workerSrc = '';
-    const copy = arrayBuffer.slice ? arrayBuffer.slice(0) : arrayBuffer;
-    return await pdfjsLib.getDocument({ data: copy, disableAutoFetch: true }).promise;
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (signal?.aborted) throw createAbortError();
+    if (timedOut) throw new Error('Request timed out');
+    throw err;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (signal) signal.removeEventListener('abort', handleAbort);
   }
 }
 
-export async function extractBook(blob, onProgress) {
+async function loadPdf(arrayBuffer, signal = null) {
+  throwIfAborted(signal);
+  try {
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const pdf = await loadingTask.promise;
+    throwIfAborted(signal);
+    return pdf;
+  } catch (e) {
+    if (isAbortError(e)) throw e;
+    console.warn('PDF.js worker failed, retrying without worker:', e);
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+    const copy = arrayBuffer.slice ? arrayBuffer.slice(0) : arrayBuffer;
+    const loadingTask = pdfjsLib.getDocument({ data: copy, disableAutoFetch: true });
+    const pdf = await loadingTask.promise;
+    throwIfAborted(signal);
+    return pdf;
+  }
+}
+
+export async function extractBook(blob, onProgress, options = {}) {
+  const signal = options.signal || null;
+  throwIfAborted(signal);
   const arrayBuffer = await blob.arrayBuffer();
-  const pdf = await loadPdf(arrayBuffer);
+  throwIfAborted(signal);
+  const pdf = await loadPdf(arrayBuffer, signal);
   cachedPdf = pdf;
   const totalPages = pdf.numPages;
   const allHtml = [];
 
   for (let i = 1; i <= totalPages; i++) {
+    throwIfAborted(signal);
     if (onProgress) onProgress(i, totalPages, 'extract');
 
     const page = await pdf.getPage(i);
@@ -41,8 +97,9 @@ export async function extractBook(blob, onProgress) {
       const earlyText = allHtml.join('').replace(/<[^>]*>/g, '').trim();
       if (earlyText.length < 20) {
         try {
-          return await ocrPages(pdf, totalPages, onProgress);
+          return await ocrPages(pdf, totalPages, onProgress, signal);
         } catch (err) {
+          if (isAbortError(err)) throw err;
           console.warn('OCR failed, falling back to image mode:', err);
           return `<!--SCANNED:${totalPages}-->`;
         }
@@ -55,8 +112,9 @@ export async function extractBook(blob, onProgress) {
   const textLength = combined.replace(/<[^>]*>/g, '').trim().length;
   if (textLength < 100 && totalPages > 1) {
     try {
-      return await ocrPages(pdf, totalPages, onProgress);
+      return await ocrPages(pdf, totalPages, onProgress, signal);
     } catch (err) {
+      if (isAbortError(err)) throw err;
       console.warn('OCR failed, falling back to image mode:', err);
       return `<!--SCANNED:${totalPages}-->`;
     }
@@ -66,27 +124,30 @@ export async function extractBook(blob, onProgress) {
 }
 
 // OCR: try server first, fall back to client-side Tesseract.js
-async function ocrPages(pdf, totalPages, onProgress) {
+async function ocrPages(pdf, totalPages, onProgress, signal = null) {
+  throwIfAborted(signal);
   const serverUrl = localStorage.getItem('kindleish:ocr-server') || '';
 
   if (serverUrl) {
     try {
-      return await ocrPagesServer(pdf, totalPages, onProgress, serverUrl);
+      return await ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal);
     } catch (err) {
+      if (isAbortError(err)) throw err;
       console.warn('Server OCR failed, falling back to client-side:', err);
     }
   }
 
-  return await ocrPagesClient(pdf, totalPages, onProgress);
+  return await ocrPagesClient(pdf, totalPages, onProgress, signal);
 }
 
 // Server-side OCR: send each page image to the server
-async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl) {
+async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal = null) {
+  throwIfAborted(signal);
   if (onProgress) onProgress(0, totalPages, 'ocr-loading');
   const sessionId = `ocr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   // Quick health check
-  const healthResp = await fetch(`${serverUrl}/api/health`, { signal: AbortSignal.timeout(5000) });
+  const healthResp = await fetchWithTimeout(`${serverUrl}/api/health`, {}, 5000, signal);
   if (!healthResp.ok) throw new Error('Server not reachable');
 
   // Parallelize server OCR requests for faster throughput on large PDFs.
@@ -100,6 +161,7 @@ async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl) {
       const pageNum = nextPage;
       nextPage += 1;
       if (pageNum > totalPages) break;
+      throwIfAborted(signal);
 
       // Render page to canvas
       const page = await pdf.getPage(pageNum);
@@ -120,6 +182,7 @@ async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl) {
       const resp = await fetch(`${serverUrl}/api/ocr`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal,
         body: JSON.stringify({
           image: dataUrl,
           session: sessionId,
@@ -149,42 +212,59 @@ async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl) {
 }
 
 // Client-side OCR using Tesseract.js (fallback)
-async function ocrPagesClient(pdf, totalPages, onProgress) {
+async function ocrPagesClient(pdf, totalPages, onProgress, signal = null) {
+  throwIfAborted(signal);
   if (onProgress) onProgress(0, totalPages, 'ocr-loading');
 
   const mod = await import('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js');
   const createWorker = mod.createWorker || mod.default?.createWorker;
   const worker = await createWorker('eng');
+  const abortWorker = () => {
+    try {
+      worker.terminate();
+    } catch (_) {}
+  };
+  if (signal) signal.addEventListener('abort', abortWorker, { once: true });
 
   const allHtml = [];
 
-  for (let i = 1; i <= totalPages; i++) {
-    if (onProgress) onProgress(i, totalPages, 'ocr');
+  try {
+    for (let i = 1; i <= totalPages; i++) {
+      throwIfAborted(signal);
+      if (onProgress) onProgress(i, totalPages, 'ocr');
 
-    const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale: 1.5 });
-    const canvas = document.createElement('canvas');
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    const ctx = canvas.getContext('2d');
-    await page.render({ canvasContext: ctx, viewport }).promise;
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 1.5 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport }).promise;
 
-    const { data } = await worker.recognize(canvas);
+      const { data } = await worker.recognize(canvas);
 
-    canvas.width = 0;
-    canvas.height = 0;
+      canvas.width = 0;
+      canvas.height = 0;
 
-    const text = data.text.trim();
-    if (text) {
-      const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim());
-      const html = paragraphs.map(p =>
-        `<p>${escapeHtml(p.replace(/\n/g, ' ').trim())}</p>`
-      ).join('\n');
-      if (html) allHtml.push(html);
+      const text = data.text.trim();
+      if (text) {
+        const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim());
+        const html = paragraphs.map(p =>
+          `<p>${escapeHtml(p.replace(/\n/g, ' ').trim())}</p>`
+        ).join('\n');
+        if (html) allHtml.push(html);
+      }
     }
+  } catch (err) {
+    if (signal?.aborted) throw createAbortError();
+    throw err;
+  } finally {
+    if (signal) signal.removeEventListener('abort', abortWorker);
+    try {
+      await worker.terminate();
+    } catch (_) {}
   }
 
-  await worker.terminate();
   return allHtml.join('\n');
 }
 
