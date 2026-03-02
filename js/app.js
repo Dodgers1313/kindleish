@@ -269,7 +269,11 @@ function escapeHtml(str) {
 
 async function cleanupServerOcrEntries() {
   const books = await getAllBooks();
-  const serverBooks = books.filter(book => String(book.id || '').startsWith('server-ocr-'));
+  const serverBooks = books.filter(book => {
+    const id = String(book.id || '');
+    const title = String(book.title || '');
+    return id.startsWith('server-ocr-') || title.startsWith('Server OCR ');
+  });
   if (serverBooks.length === 0) return;
 
   for (const book of serverBooks) {
