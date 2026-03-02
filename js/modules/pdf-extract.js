@@ -142,6 +142,7 @@ async function ocrPages(pdf, blob, totalPages, onProgress, signal = null) {
     return await ocrPagesServer(pdf, blob, totalPages, onProgress, serverUrl, signal);
   } catch (err) {
     if (isAbortError(err)) throw err;
+    if (err.name === 'OcrKeyError') throw err;
     console.warn('[OCR] Server failed, falling back to client-side:', err);
   }
 
