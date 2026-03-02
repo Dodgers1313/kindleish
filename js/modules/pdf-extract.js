@@ -160,7 +160,7 @@ async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal = n
   if (!healthResp.ok) throw new Error('Server not reachable');
 
   // Parallelize server OCR requests for faster throughput on large PDFs.
-  const concurrency = Math.min(2, totalPages);
+  const concurrency = Math.min(4, totalPages);
   const htmlByPage = new Array(totalPages).fill('');
   let nextPage = 1;
   let completed = 0;
@@ -173,9 +173,9 @@ async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal = n
       if (pageNum > totalPages) break;
       throwIfAborted(signal);
 
-      // Render page to canvas
+      // Render page to canvas (1.0x — scanned PDFs already have 150-300 DPI)
       const page = await pdf.getPage(pageNum);
-      const viewport = page.getViewport({ scale: 1.5 });
+      const viewport = page.getViewport({ scale: 1.0 });
       const canvas = document.createElement('canvas');
       canvas.width = viewport.width;
       canvas.height = viewport.height;
