@@ -358,6 +358,28 @@ function reconstructText(items) {
   const headingThreshold = bodyFontSize * 1.2;
   const paragraphGapThreshold = bodyFontSize * 1.5;
 
+  // Detect left margin by finding the most common X position of line starts
+  const lineStartXs = [];
+  let scanPrevY = null;
+  for (const item of items) {
+    if (!item.str || !item.str.trim()) continue;
+    const y = item.transform[5];
+    const x = item.transform[4];
+    if (scanPrevY === null || Math.abs(scanPrevY - y) > Math.abs(item.transform[0]) * 0.5) {
+      lineStartXs.push(Math.round(x));
+    }
+    scanPrevY = y;
+  }
+  // Left margin = most frequent line start X
+  const xFreq = {};
+  for (const x of lineStartXs) xFreq[x] = (xFreq[x] || 0) + 1;
+  let leftMargin = 0;
+  let leftMarginCount = 0;
+  for (const [x, count] of Object.entries(xFreq)) {
+    if (count > leftMarginCount) { leftMarginCount = count; leftMargin = parseFloat(x); }
+  }
+  const indentThreshold = bodyFontSize * 1.5; // how far right counts as indent
+
   const blocks = [];
   let currentBlock = { text: '', isHeading: false };
   let prevY = null;
@@ -367,13 +389,16 @@ function reconstructText(items) {
 
     const text = item.str;
     const fontSize = Math.abs(item.transform[0]);
+    const x = item.transform[4];
     const y = item.transform[5];
     const isHeading = fontSize >= headingThreshold && text.trim().length > 0;
 
     if (prevY !== null) {
       const yDiff = Math.abs(prevY - y);
+      const isNewLine = yDiff > fontSize * 0.5;
+      const isIndented = isNewLine && (x - leftMargin) > indentThreshold;
 
-      if (yDiff > paragraphGapThreshold) {
+      if (yDiff > paragraphGapThreshold || isIndented) {
         if (currentBlock.text.trim()) {
           blocks.push({ ...currentBlock });
         }
@@ -381,7 +406,7 @@ function reconstructText(items) {
       } else if (isHeading !== currentBlock.isHeading && currentBlock.text.trim()) {
         blocks.push({ ...currentBlock });
         currentBlock = { text: '', isHeading };
-      } else if (yDiff > fontSize * 0.5) {
+      } else if (isNewLine) {
         currentBlock.text += ' ';
       } else if (text.length > 0 && !currentBlock.text.endsWith(' ') && !text.startsWith(' ')) {
         if (currentBlock.text.length > 0) {
