@@ -1,0 +1,6 @@
+.DS_Store
+.claude/
+*.log
+
+# Local large docs not needed in repo
+Project Mary Hail.pdf

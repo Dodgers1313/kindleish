@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Kindleish</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/library.css">
+</head>
+<body class="theme-white">
+  <header class="library-header">
+    <h1 class="library-title">Kindleish</h1>
+    <button id="settings-link" class="library-settings-btn" title="Settings">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+    </button>
+    <label class="upload-btn" for="file-input">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+      </svg>
+    </label>
+    <input type="file" id="file-input" accept=".pdf,application/pdf" hidden>
+  </header>
+
+  <main class="library-content">
+    <div id="library-grid" class="library-grid"></div>
+
+    <div id="empty-state" class="empty-state">
+      <div class="drop-zone" id="drop-zone">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+          <polyline points="14 2 14 8 20 8"></polyline>
+          <line x1="12" y1="18" x2="12" y2="12"></line>
+          <line x1="9" y1="15" x2="12" y2="12"></line>
+          <line x1="15" y1="15" x2="12" y2="12"></line>
+        </svg>
+        <p class="drop-text">Upload a PDF to start reading</p>
+        <p class="drop-subtext">Tap here or use the + button</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Loading overlay for PDF processing -->
+  <div id="loading-overlay" class="loading-overlay hidden">
+    <div class="loading-content">
+      <div class="spinner"></div>
+      <p id="loading-text">Processing PDF...</p>
+    </div>
+  </div>
+
+  <!-- Settings dialog -->
+  <div id="settings-dialog" class="dialog-overlay hidden">
+    <div class="dialog">
+      <p class="dialog-text">OCR Server URL</p>
+      <p class="dialog-subtext">For faster scanned PDF processing. Leave blank to use on-device OCR.</p>
+      <input type="url" id="ocr-server-input" class="dialog-input" placeholder="http://your-server:5000">
+      <div class="dialog-actions">
+        <button id="settings-cancel" class="dialog-btn">Cancel</button>
+        <button id="settings-save" class="dialog-btn dialog-btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete confirmation dialog -->
+  <div id="delete-dialog" class="dialog-overlay hidden">
+    <div class="dialog">
+      <p class="dialog-text">Remove this book from your library?</p>
+      <div class="dialog-actions">
+        <button id="delete-cancel" class="dialog-btn">Cancel</button>
+        <button id="delete-confirm" class="dialog-btn dialog-btn-danger">Remove</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
