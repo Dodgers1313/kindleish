@@ -11,4 +11,5 @@ services:
       OMP_THREAD_LIMIT: "1"
     volumes:
       - ./ocr-data:/data/ocr
+      - ./library-data:/data/library
     restart: unless-stopped

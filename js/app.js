@@ -1,4 +1,5 @@
-import { saveBook, getAllBooks, deleteBook, clearBookData, getPosition, getLibraryOrder, saveLibraryOrder } from './modules/storage.js';
+import { saveBook, getAllBooks, deleteBook, clearBookData, getPosition, savePosition, getBookmarks, saveBookmarks, getLibraryOrder, saveLibraryOrder } from './modules/storage.js';
+import { fetchLibrary, pushBookMeta, pushContent, deleteBookRemote } from './modules/sync.js';
 
 const fileInput = document.getElementById('file-input');
 const dropZone = document.getElementById('drop-zone');
@@ -114,6 +115,7 @@ async function handleFile(file) {
     };
 
     await saveBook(book);
+    pushBookMeta(id, { title, addedAt: book.addedAt, pageCount: 0 });
 
     // Update library order
     const order = getLibraryOrder();
@@ -161,6 +163,7 @@ deleteConfirm.addEventListener('click', async () => {
   if (deleteTargetId) {
     await deleteBook(deleteTargetId);
     clearBookData(deleteTargetId);
+    deleteBookRemote(deleteTargetId);
     deleteTargetId = null;
     deleteDialog.classList.add('hidden');
     renderLibrary();
@@ -182,13 +185,63 @@ function hideLoading() {
   loadingOverlay.classList.add('hidden');
 }
 
+async function mergeWithServer(localBooks) {
+  const remoteBooks = await fetchLibrary();
+  if (!remoteBooks) return localBooks; // offline — just use local
+
+  const localMap = new Map(localBooks.map(b => [b.id, b]));
+  const remoteMap = new Map(remoteBooks.map(b => [b.id, b]));
+
+  // Remote books not in local → create local stubs
+  for (const remote of remoteBooks) {
+    if (!localMap.has(remote.id)) {
+      const stub = {
+        id: remote.id,
+        title: remote.title,
+        addedAt: remote.addedAt || Date.now(),
+        pageCount: remote.pageCount || 0,
+        blob: null,
+        extractedHtml: null
+      };
+      try { await saveBook(stub); } catch {}
+      localBooks.push(stub);
+
+      // Sync position and bookmarks from server
+      if (remote.position) savePosition(remote.id, remote.position);
+      if (remote.bookmarks) saveBookmarks(remote.id, remote.bookmarks);
+    }
+  }
+
+  // Local books not on server → push metadata + content in background
+  for (const local of localBooks) {
+    if (!remoteMap.has(local.id)) {
+      pushBookMeta(local.id, { title: local.title, addedAt: local.addedAt, pageCount: local.pageCount || 0 });
+      if (local.extractedHtml) pushContent(local.id, local.extractedHtml);
+    }
+  }
+
+  // Merge positions — use newer timestamp
+  for (const remote of remoteBooks) {
+    if (!remote.position || !localMap.has(remote.id)) continue;
+    const localPos = getPosition(remote.id);
+    if (!localPos || remote.position.timestamp > localPos.timestamp) {
+      savePosition(remote.id, remote.position);
+    }
+  }
+
+  return localBooks;
+}
+
 // Render library
 async function renderLibrary() {
-  const books = (await getAllBooks()).filter(book => {
+  const localBooks = (await getAllBooks()).filter(book => {
     const id = String(book.id || '');
     const title = String(book.title || '');
     return !(id.startsWith('server-ocr-') || title.startsWith('Server OCR '));
   });
+
+  // Merge with server library (non-blocking on failure)
+  const books = await mergeWithServer(localBooks);
 
   if (books.length === 0) {
     emptyState.classList.remove('hidden');

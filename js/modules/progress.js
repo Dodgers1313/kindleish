@@ -1,6 +1,8 @@
 import { getPosition, savePosition as storeSavePosition } from './storage.js';
+import { pushPosition } from './sync.js';
 
 let bookId = null;
+let syncTimer = null;
 
 export function initProgress(id) {
   bookId = id;
@@ -10,6 +12,12 @@ export function saveCurrentPosition(page, totalPages) {
   if (!bookId) return;
   const percentage = totalPages > 1 ? (page - 1) / (totalPages - 1) : 1;
   storeSavePosition(bookId, { page, totalPages, percentage });
+
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    const pos = getPosition(bookId);
+    if (pos) pushPosition(bookId, pos);
+  }, 3000);
 }
 
 export function restorePosition(id, totalPages) {

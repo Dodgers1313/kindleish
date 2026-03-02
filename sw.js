@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kindleish-v9';
+const CACHE_NAME = 'kindleish-v10';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -16,6 +16,7 @@ const APP_SHELL = [
   '/js/modules/typography.js',
   '/js/modules/bookmarks.js',
   '/js/modules/progress.js',
+  '/js/modules/sync.js',
   '/manifest.json'
 ];
 

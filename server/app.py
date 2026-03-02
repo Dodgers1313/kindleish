@@ -4,9 +4,11 @@ import pytesseract
 from PIL import Image
 import fitz  # PyMuPDF
 import io
+import json
 import base64
 import os
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
@@ -16,6 +18,7 @@ CORS(app)
 
 SAVE_ENABLED = os.environ.get("OCR_SAVE_ENABLED", "1") != "0"
 SAVE_DIR = Path(os.environ.get("OCR_SAVE_DIR", "/data/ocr"))
+LIBRARY_DIR = Path(os.environ.get("LIBRARY_DIR", "/data/library"))
 WEB_ROOT = Path(__file__).resolve().parent
 OCR_FILE_RE = re.compile(
     r"^(?P<ts>\d{8}T\d{6}Z)_(?P<session>[A-Za-z0-9_-]+)_p(?P<page>\d{4})\.txt$"
@@ -178,6 +181,106 @@ def ocr_session_text(session: str):
     for _, path in data["files"]:
         combined.append(path.read_text(encoding="utf-8"))
     return "".join(combined), 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+# --- Library sync endpoints ---
+
+def _book_dir(book_id: str) -> Path:
+    safe_id = "".join(c for c in book_id if c.isalnum() or c in ("-", "_"))[:80]
+    return LIBRARY_DIR / safe_id
+
+
+def _read_json(path: Path):
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_json(path: Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+@app.route("/api/library", methods=["GET"])
+def library_list():
+    books = []
+    if LIBRARY_DIR.exists():
+        for d in LIBRARY_DIR.iterdir():
+            if not d.is_dir():
+                continue
+            meta = _read_json(d / "meta.json")
+            if not meta:
+                continue
+            entry = {**meta, "id": d.name, "hasContent": (d / "content.html").exists()}
+            pos = _read_json(d / "position.json")
+            if pos:
+                entry["position"] = pos
+            bm = _read_json(d / "bookmarks.json")
+            if bm is not None:
+                entry["bookmarks"] = bm
+            books.append(entry)
+    books.sort(key=lambda b: b.get("addedAt", 0), reverse=True)
+    return jsonify({"books": books})
+
+
+@app.route("/api/library/<book_id>", methods=["PUT"])
+def library_put(book_id: str):
+    data = request.json or {}
+    d = _book_dir(book_id)
+    meta = {"title": data.get("title", ""), "addedAt": data.get("addedAt", 0),
+            "pageCount": data.get("pageCount", 0)}
+    _write_json(d / "meta.json", meta)
+    return jsonify(meta)
+
+
+@app.route("/api/library/<book_id>", methods=["DELETE"])
+def library_delete(book_id: str):
+    d = _book_dir(book_id)
+    if not d.exists():
+        return jsonify({"error": "Not found"}), 404
+    shutil.rmtree(d)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/library/<book_id>/content", methods=["GET"])
+def library_content_get(book_id: str):
+    path = _book_dir(book_id) / "content.html"
+    if not path.exists():
+        return jsonify({"error": "Not found"}), 404
+    return path.read_text(encoding="utf-8"), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.route("/api/library/<book_id>/content", methods=["PUT"])
+def library_content_put(book_id: str):
+    d = _book_dir(book_id)
+    d.mkdir(parents=True, exist_ok=True)
+    html = request.get_data(as_text=True)
+    (d / "content.html").write_text(html, encoding="utf-8")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/library/<book_id>/position", methods=["PUT"])
+def library_position_put(book_id: str):
+    data = request.json or {}
+    d = _book_dir(book_id)
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / "position.json"
+    existing = _read_json(path)
+    if existing and existing.get("timestamp", 0) >= data.get("timestamp", 0):
+        return jsonify(existing)
+    _write_json(path, data)
+    return jsonify(data)
+
+
+@app.route("/api/library/<book_id>/bookmarks", methods=["PUT"])
+def library_bookmarks_put(book_id: str):
+    data = request.json
+    if data is None:
+        data = []
+    d = _book_dir(book_id)
+    d.mkdir(parents=True, exist_ok=True)
+    _write_json(d / "bookmarks.json", data)
+    return jsonify(data)
 
 
 @app.route("/saved", methods=["GET"])

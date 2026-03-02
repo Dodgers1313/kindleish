@@ -1,4 +1,4 @@
-import { getBook, saveExtractedHtml, deleteBook, clearBookData } from './modules/storage.js';
+import { getBook, saveBook, saveExtractedHtml, deleteBook, clearBookData, getPosition } from './modules/storage.js';
 import { extractBook, renderPdfPage } from './modules/pdf-extract.js';
 import { initPaginator, goToPage, nextPage, prevPage, getCurrentPage, getTotalPages, getProgress, recalculate } from './modules/paginator.js';
 import { initGestures } from './modules/gestures.js';
@@ -6,6 +6,7 @@ import { restoreTheme, setTheme, getCurrentTheme } from './modules/themes.js';
 import { initTypography, increaseFontSize, decreaseFontSize, setFontFamily, setLineHeight, getFontSize, getFontFamily, getLineHeight } from './modules/typography.js';
 import { initBookmarks, toggleBookmark, isBookmarked } from './modules/bookmarks.js';
 import { initProgress, saveCurrentPosition, restorePosition } from './modules/progress.js';
+import { fetchContent, pushContent, pushBookMeta, fetchPosition } from './modules/sync.js';
 
 // DOM elements
 const readerLoading = document.getElementById('reader-loading');
@@ -83,6 +84,21 @@ async function init() {
 
   // Extract text or use cached
   let html = book.extractedHtml;
+
+  // If no local HTML and no blob, try fetching from server
+  if (!html && !book.blob) {
+    extractProgress.textContent = 'Downloading from server...';
+    const remoteHtml = await fetchContent(bookId);
+    if (remoteHtml) {
+      html = remoteHtml;
+      try { await saveExtractedHtml(bookId, html); } catch {}
+    } else {
+      alert('This book has not been processed on any device yet.');
+      window.location.href = 'index.html';
+      return;
+    }
+  }
+
   if (!html) {
     extractProgress.textContent = 'Extracting text...';
     extractCancel.classList.remove('hidden');
@@ -105,6 +121,9 @@ async function init() {
       } catch (saveErr) {
         console.warn('Could not cache extraction result:', saveErr);
       }
+      // Push to server for cross-device access
+      pushContent(bookId, html);
+      pushBookMeta(bookId, { title: book.title, addedAt: book.addedAt, pageCount: book.pageCount || 0 });
     } catch (err) {
       if (extractionCancelled || isAbortError(err)) {
         window.location.href = 'index.html';
@@ -148,6 +167,19 @@ async function init() {
   // Restore reading position
   const savedPage = restorePosition(bookId, totalPages);
   goToPage(savedPage, false);
+
+  // Check server for newer position (non-blocking)
+  fetchPosition(bookId).then(remotePos => {
+    if (!remotePos) return;
+    const localPos = getPosition(bookId);
+    if (!localPos || remotePos.timestamp > localPos.timestamp) {
+      const newPage = Math.max(1, Math.round(remotePos.percentage * (totalPages - 1)) + 1);
+      if (newPage !== getCurrentPage()) {
+        goToPage(newPage, false);
+        updateUI();
+      }
+    }
+  });
 
   // Init gestures
   initGestures(viewport, {
