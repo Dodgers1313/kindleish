@@ -104,7 +104,7 @@ export async function extractBook(blob, onProgress, options = {}) {
       const earlyText = allHtml.join('').replace(/<[^>]*>/g, '').trim();
       if (earlyText.length < 20) {
         try {
-          return await ocrPages(pdf, totalPages, onProgress, signal);
+          return await ocrPages(pdf, blob, totalPages, onProgress, signal);
         } catch (err) {
           if (isAbortError(err)) throw err;
           console.warn('OCR failed, falling back to image mode:', err);
@@ -119,7 +119,7 @@ export async function extractBook(blob, onProgress, options = {}) {
   const textLength = combined.replace(/<[^>]*>/g, '').trim().length;
   if (textLength < 100 && totalPages > 1) {
     try {
-      return await ocrPages(pdf, totalPages, onProgress, signal);
+      return await ocrPages(pdf, blob, totalPages, onProgress, signal);
     } catch (err) {
       if (isAbortError(err)) throw err;
       console.warn('OCR failed, falling back to image mode:', err);
@@ -131,14 +131,14 @@ export async function extractBook(blob, onProgress, options = {}) {
 }
 
 // OCR: try server first, fall back to client-side Tesseract.js
-async function ocrPages(pdf, totalPages, onProgress, signal = null) {
+async function ocrPages(pdf, blob, totalPages, onProgress, signal = null) {
   await yieldToUi(signal);
   throwIfAborted(signal);
   const serverUrl = localStorage.getItem('kindleish:ocr-server') || '';
 
   if (serverUrl) {
     try {
-      return await ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal);
+      return await ocrPagesServer(pdf, blob, totalPages, onProgress, serverUrl, signal);
     } catch (err) {
       if (isAbortError(err)) throw err;
       console.warn('Server OCR failed, falling back to client-side:', err);
@@ -148,67 +148,55 @@ async function ocrPages(pdf, totalPages, onProgress, signal = null) {
   return await ocrPagesClient(pdf, totalPages, onProgress, signal);
 }
 
-// Server-side OCR: send each page image to the server
-async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal = null) {
+// Convert a Blob to base64 string (without data URL prefix)
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function pagesToHtml(pages) {
+  return pages.map(text => {
+    if (!text || !text.trim()) return '';
+    const paragraphs = text.trim().split(/\n\s*\n/).filter(p => p.trim());
+    return paragraphs.map(p =>
+      `<p>${escapeHtml(p.replace(/\n/g, ' ').trim())}</p>`
+    ).join('\n');
+  }).filter(Boolean).join('\n');
+}
+
+// Server-side OCR: upload full PDF for parallel server-side rendering + OCR
+async function ocrPagesServer(pdf, blob, totalPages, onProgress, serverUrl, signal = null) {
   await yieldToUi(signal);
   throwIfAborted(signal);
-  if (onProgress) onProgress(0, totalPages, 'ocr-loading');
-  const sessionId = `ocr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   // Quick health check
   const healthResp = await fetchWithTimeout(`${serverUrl}/api/health`, {}, 5000, signal);
   if (!healthResp.ok) throw new Error('Server not reachable');
 
-  const concurrency = Math.min(2, totalPages);
-  const htmlByPage = new Array(totalPages).fill('');
-  let nextPage = 1;
-  let completed = 0;
+  if (onProgress) onProgress(0, totalPages, 'ocr-loading');
+  const sessionId = `ocr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  async function runWorker() {
-    while (true) {
-      await yieldToUi(signal);
-      const pageNum = nextPage;
-      nextPage += 1;
-      if (pageNum > totalPages) break;
-      throwIfAborted(signal);
+  // Encode PDF as base64 and send to server for parallel render+OCR
+  const pdfBase64 = await blobToBase64(blob);
+  throwIfAborted(signal);
 
-      const page = await pdf.getPage(pageNum);
-      const viewport = page.getViewport({ scale: 1.0 });
-      const canvas = document.createElement('canvas');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      const ctx = canvas.getContext('2d');
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      throwIfAborted(signal);
+  if (onProgress) onProgress(0, totalPages, 'ocr');
 
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-      canvas.width = 0;
-      canvas.height = 0;
+  const resp = await fetch(`${serverUrl}/api/ocr/pdf`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal,
+    body: JSON.stringify({ pdf: pdfBase64, session: sessionId })
+  });
 
-      const resp = await fetch(`${serverUrl}/api/ocr`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal,
-        body: JSON.stringify({ image: dataUrl, session: sessionId, page: pageNum, totalPages })
-      });
-      if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
-      const { text } = await resp.json();
-
-      if (text && text.trim()) {
-        const paragraphs = text.trim().split(/\n\s*\n/).filter(p => p.trim());
-        const html = paragraphs.map(p =>
-          `<p>${escapeHtml(p.replace(/\n/g, ' ').trim())}</p>`
-        ).join('\n');
-        if (html) htmlByPage[pageNum - 1] = html;
-      }
-
-      completed += 1;
-      if (onProgress) onProgress(completed, totalPages, 'ocr');
-    }
-  }
-
-  await Promise.all(Array.from({ length: concurrency }, () => runWorker()));
-  return htmlByPage.filter(Boolean).join('\n');
+  if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+  const { pages } = await resp.json();
+  if (onProgress) onProgress(totalPages, totalPages, 'ocr');
+  return pagesToHtml(pages);
 }
 
 // Client-side OCR using Tesseract.js (fallback)

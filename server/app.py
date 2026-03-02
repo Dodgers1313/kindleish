@@ -2,12 +2,14 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import pytesseract
 from PIL import Image
+import fitz  # PyMuPDF
 import io
 import base64
 import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 CORS(app)
@@ -90,6 +92,60 @@ def ocr():
         save_ocr_text(text, data.get("session"), data.get("page"))
 
         return jsonify({"text": text})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def _render_and_ocr_page(args: tuple) -> tuple[int, str]:
+    """Render a single PDF page with PyMuPDF and OCR it. Thread-safe."""
+    pdf_bytes, page_num, ocr_config = args
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        page = doc.load_page(page_num)
+        # Render at 2x scale (~144 DPI) for good OCR accuracy
+        mat = fitz.Matrix(2.0, 2.0)
+        pix = page.get_pixmap(matrix=mat, colorspace=fitz.csGRAY)
+        img = Image.frombytes("L", (pix.width, pix.height), pix.samples)
+        text = pytesseract.image_to_string(img, config=ocr_config)
+        return page_num, text
+    finally:
+        doc.close()
+
+
+@app.route("/api/ocr/pdf", methods=["POST"])
+def ocr_pdf():
+    """Accept a base64-encoded PDF, render+OCR all pages in parallel with PyMuPDF."""
+    data = request.json
+    if not data or "pdf" not in data:
+        return jsonify({"error": "Missing 'pdf' field"}), 400
+
+    try:
+        pdf_b64 = data["pdf"]
+        if "," in pdf_b64:
+            pdf_b64 = pdf_b64.split(",", 1)[1]
+        pdf_bytes = base64.b64decode(pdf_b64)
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        num_pages = len(doc)
+        doc.close()
+
+        session = data.get("session")
+        ocr_config = "--oem 1"
+        cpu_count = os.cpu_count() or 4
+
+        with ThreadPoolExecutor(max_workers=cpu_count) as executor:
+            results = list(executor.map(
+                _render_and_ocr_page,
+                [(pdf_bytes, i, ocr_config) for i in range(num_pages)]
+            ))
+
+        # results are (page_num, text) tuples, already in order from map()
+        texts = [text for _, text in results]
+
+        for i, text in enumerate(texts):
+            save_ocr_text(text, session, i + 1)
+
+        return jsonify({"pages": texts})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
