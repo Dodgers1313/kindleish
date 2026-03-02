@@ -83,6 +83,7 @@ async function ocrPages(pdf, totalPages, onProgress) {
 // Server-side OCR: send each page image to the server
 async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl) {
   if (onProgress) onProgress(0, totalPages, 'ocr-loading');
+  const sessionId = `ocr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   // Quick health check
   const healthResp = await fetch(`${serverUrl}/api/health`, { signal: AbortSignal.timeout(5000) });
@@ -112,7 +113,12 @@ async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl) {
     const resp = await fetch(`${serverUrl}/api/ocr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: dataUrl })
+      body: JSON.stringify({
+        image: dataUrl,
+        session: sessionId,
+        page: i,
+        totalPages
+      })
     });
 
     if (!resp.ok) throw new Error(`Server returned ${resp.status}`);

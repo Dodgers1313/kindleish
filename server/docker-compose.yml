@@ -3,4 +3,9 @@ services:
     build: .
     ports:
       - "5000:5000"
+    environment:
+      OCR_SAVE_ENABLED: "1"
+      OCR_SAVE_DIR: /data/ocr
+    volumes:
+      - ./ocr-data:/data/ocr
     restart: unless-stopped

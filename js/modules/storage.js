@@ -30,8 +30,10 @@ export async function saveBook(book) {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
     const request = store.put(book);
-    request.onsuccess = () => resolve(book.id);
     request.onerror = (e) => reject(e.target.error);
+    tx.oncomplete = () => resolve(book.id);
+    tx.onerror = (e) => reject(e.target.error || new Error('Failed to save book'));
+    tx.onabort = () => reject(tx.error || new Error('Book save transaction aborted'));
   });
 }
 
