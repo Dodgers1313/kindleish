@@ -130,21 +130,22 @@ export async function extractBook(blob, onProgress, options = {}) {
   return combined;
 }
 
-// OCR: try server first, fall back to client-side Tesseract.js
+// OCR: try server first (same-origin or configured URL), fall back to client-side Tesseract.js
 async function ocrPages(pdf, blob, totalPages, onProgress, signal = null) {
   await yieldToUi(signal);
   throwIfAborted(signal);
+  // Use configured URL, or empty string for same-origin relative requests
   const serverUrl = localStorage.getItem('kindleish:ocr-server') || '';
 
-  if (serverUrl) {
-    try {
-      return await ocrPagesServer(pdf, blob, totalPages, onProgress, serverUrl, signal);
-    } catch (err) {
-      if (isAbortError(err)) throw err;
-      console.warn('Server OCR failed, falling back to client-side:', err);
-    }
+  try {
+    console.log('[OCR] Trying server at', serverUrl || '(same-origin)');
+    return await ocrPagesServer(pdf, blob, totalPages, onProgress, serverUrl, signal);
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    console.warn('[OCR] Server failed, falling back to client-side:', err);
   }
 
+  console.log('[OCR] Using client-side Tesseract.js');
   return await ocrPagesClient(pdf, totalPages, onProgress, signal);
 }
 
