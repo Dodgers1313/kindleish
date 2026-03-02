@@ -107,7 +107,11 @@ async function init() {
     extractionCancelled = false;
     try {
       html = await extractBook(book.blob, (current, total, phase) => {
-        if (phase === 'ocr-loading') {
+        if (phase === 'ocr-queue') {
+          extractProgress.textContent = current === 1
+            ? 'Waiting in line (1 job ahead)...'
+            : `Waiting in line (${current} jobs ahead)...`;
+        } else if (phase === 'ocr-loading') {
           extractProgress.textContent = 'Loading OCR engine...';
         } else if (phase === 'ocr') {
           extractProgress.textContent = `Reading page ${current} of ${total} (OCR)...`;

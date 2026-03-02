@@ -12,9 +12,15 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+import threading
 
 app = Flask(__name__)
 CORS(app)
+
+# Global OCR queue — only one OCR job runs at a time
+_ocr_lock = threading.Lock()
+_ocr_queue_count = 0  # number of jobs waiting or running
+_ocr_queue_count_lock = threading.Lock()
 
 SAVE_ENABLED = os.environ.get("OCR_SAVE_ENABLED", "1") != "0"
 SAVE_DIR = Path(os.environ.get("OCR_SAVE_DIR", "/data/ocr"))
@@ -74,6 +80,12 @@ def health():
     return jsonify({"status": "ok"})
 
 
+@app.route("/api/ocr/queue", methods=["GET"])
+def ocr_queue_status():
+    with _ocr_queue_count_lock:
+        return jsonify({"waiting": _ocr_queue_count})
+
+
 @app.route("/api/ocr", methods=["POST"])
 def ocr():
     """Accept a base64-encoded page image, return OCR'd text and persist it."""
@@ -90,8 +102,15 @@ def ocr():
         image_bytes = base64.b64decode(img_data)
         image = Image.open(io.BytesIO(image_bytes)).convert('L')
 
-        # Run Tesseract OCR (LSTM-only engine, auto page segmentation)
-        text = pytesseract.image_to_string(image, config='--oem 1')
+        with _ocr_queue_count_lock:
+            global _ocr_queue_count
+            _ocr_queue_count += 1
+        try:
+            with _ocr_lock:
+                text = pytesseract.image_to_string(image, config='--oem 1')
+        finally:
+            with _ocr_queue_count_lock:
+                _ocr_queue_count -= 1
         save_ocr_text(text, data.get("session"), data.get("page"))
 
         return jsonify({"text": text})
@@ -136,11 +155,18 @@ def ocr_pdf():
         ocr_config = "--oem 1"
         cpu_count = os.cpu_count() or 4
 
-        with ThreadPoolExecutor(max_workers=cpu_count) as executor:
-            results = list(executor.map(
-                _render_and_ocr_page,
-                [(pdf_bytes, i, ocr_config) for i in range(num_pages)]
-            ))
+        with _ocr_queue_count_lock:
+            _ocr_queue_count += 1
+        try:
+            with _ocr_lock:
+                with ThreadPoolExecutor(max_workers=cpu_count) as executor:
+                    results = list(executor.map(
+                        _render_and_ocr_page,
+                        [(pdf_bytes, i, ocr_config) for i in range(num_pages)]
+                    ))
+        finally:
+            with _ocr_queue_count_lock:
+                _ocr_queue_count -= 1
 
         # results are (page_num, text) tuples, already in order from map()
         texts = [text for _, text in results]

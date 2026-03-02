@@ -185,6 +185,17 @@ async function ocrPagesServer(pdf, blob, totalPages, onProgress, serverUrl, sign
   const pdfBase64 = await blobToBase64(blob);
   throwIfAborted(signal);
 
+  // Check queue before submitting — show position in line
+  try {
+    const qResp = await fetchWithTimeout(`${serverUrl}/api/ocr/queue`, {}, 3000, signal);
+    if (qResp.ok) {
+      const q = await qResp.json();
+      if (q.waiting > 0) {
+        if (onProgress) onProgress(q.waiting, totalPages, 'ocr-queue');
+      }
+    }
+  } catch (_) {}
+
   if (onProgress) onProgress(0, totalPages, 'ocr');
 
   const resp = await fetch(`${serverUrl}/api/ocr/pdf`, {
