@@ -410,7 +410,7 @@ function reconstructText(items) {
 }
 
 // Page number pattern: standalone number, "Page N", "— N —", "- N -", "N of M"
-const PAGE_NUM_RE = /^\s*(?:page\s+)?\d+(?:\s+of\s+\d+)?\s*$|^\s*[-—]\s*\d+\s*[-—]\s*$/i;
+const PAGE_NUM_RE = /^\s*(?:page\s+)?\d+(?:\s+of\s+\d+)?\s*$|^\s*[-\u2013\u2014]\s*\d+\s*[-\u2013\u2014]\s*$/i;
 
 // Strip repeated headers/footers and page numbers from raw per-page text
 function stripHeadersFooters(pageTexts) {
