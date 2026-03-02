@@ -356,28 +356,7 @@ function reconstructText(items) {
   }
 
   const headingThreshold = bodyFontSize * 1.2;
-
-  // Measure actual line gaps to adapt paragraph detection to the PDF's line spacing
-  const lineGaps = [];
-  let measPrevY = null;
-  for (const item of items) {
-    if (!item.str || !item.str.trim()) continue;
-    const y = item.transform[5];
-    if (measPrevY !== null) {
-      const gap = Math.abs(measPrevY - y);
-      if (gap > bodyFontSize * 0.3) lineGaps.push(gap); // only line-level gaps
-    }
-    measPrevY = y;
-  }
-
-  let paragraphGapThreshold;
-  if (lineGaps.length > 2) {
-    lineGaps.sort((a, b) => a - b);
-    const medianGap = lineGaps[Math.floor(lineGaps.length / 2)];
-    paragraphGapThreshold = medianGap * 1.8;
-  } else {
-    paragraphGapThreshold = bodyFontSize * 1.5;
-  }
+  const paragraphGapThreshold = bodyFontSize * 1.5;
 
   const blocks = [];
   let currentBlock = { text: '', isHeading: false };
