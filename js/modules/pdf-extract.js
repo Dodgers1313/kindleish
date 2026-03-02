@@ -416,39 +416,35 @@ const PAGE_NUM_RE = /^\s*(?:page\s+)?\d+(?:\s+of\s+\d+)?\s*$|^\s*[-\u2013\u2014]
 function stripHeadersFooters(pageTexts) {
   if (pageTexts.length < 3) return pageTexts;
 
-  const edgeLines = new Map(); // line text → count of pages it appears on
   const pageLines = pageTexts.map(t => (t || '').split('\n'));
 
-  // Collect first 2 and last 2 lines from each page, count frequency
+  // Count how many pages each short line appears on (any position)
+  const lineFreq = new Map();
   for (const lines of pageLines) {
     const seen = new Set();
-    const edges = lines.slice(0, 2).concat(lines.slice(-2));
-    for (const line of edges) {
+    for (const line of lines) {
       const key = line.trim().toLowerCase();
-      if (key && key.length < 100 && !seen.has(key)) {
+      if (key && key.length < 200 && !seen.has(key)) {
         seen.add(key);
-        edgeLines.set(key, (edgeLines.get(key) || 0) + 1);
+        lineFreq.set(key, (lineFreq.get(key) || 0) + 1);
       }
     }
   }
 
-  const threshold = pageTexts.length * 0.5;
+  const threshold = pageTexts.length * 0.4;
   const noiseLines = new Set();
-  for (const [line, count] of edgeLines) {
+  for (const [line, count] of lineFreq) {
     if (count >= threshold) noiseLines.add(line);
   }
 
   return pageLines.map(lines => {
-    // Only strip from first 2 and last 2 lines
-    const strip = (line, idx) => {
-      if (idx >= 2 && idx < lines.length - 2) return true; // keep middle lines
+    return lines.filter(line => {
       const trimmed = line.trim();
       if (!trimmed) return true;
       if (PAGE_NUM_RE.test(trimmed)) return false;
       if (noiseLines.has(trimmed.toLowerCase())) return false;
       return true;
-    };
-    return lines.filter(strip).join('\n');
+    }).join('\n');
   });
 }
 
@@ -456,38 +452,40 @@ function stripHeadersFooters(pageTexts) {
 function stripHtmlNoise(pagesHtml) {
   if (pagesHtml.length < 3) return pagesHtml;
 
-  // Extract text from <p> tags, count frequency of short repeated paragraphs
-  const paraFreq = new Map();
+  // Split each page's HTML into individual elements
   const parsedPages = pagesHtml.map(html => {
     const parts = html.split(/(?=<(?:p|h2)>)|(?<=<\/(?:p|h2)>)/);
     return parts.filter(p => p.trim());
   });
 
+  // Count how many pages each paragraph text appears on
+  const paraFreq = new Map();
   for (const parts of parsedPages) {
     const seen = new Set();
-    // Check first 2 and last 2 elements
-    const edges = parts.slice(0, 2).concat(parts.slice(-2));
-    for (const part of edges) {
+    for (const part of parts) {
       const text = part.replace(/<[^>]*>/g, '').trim().toLowerCase();
-      if (text && text.length < 100 && !seen.has(text)) {
+      if (text && text.length < 200 && !seen.has(text)) {
         seen.add(text);
         paraFreq.set(text, (paraFreq.get(text) || 0) + 1);
       }
     }
   }
 
-  const threshold = pagesHtml.length * 0.5;
+  const threshold = pagesHtml.length * 0.4;
   const noisePara = new Set();
   for (const [text, count] of paraFreq) {
     if (count >= threshold) noisePara.add(text);
   }
 
   return parsedPages.map(parts => {
-    const filtered = parts.filter((part, idx) => {
-      if (idx >= 2 && idx < parts.length - 2) return true;
+    const filtered = parts.filter(part => {
       const text = part.replace(/<[^>]*>/g, '').trim();
       if (PAGE_NUM_RE.test(text)) return false;
       if (noisePara.has(text.toLowerCase())) return false;
+      // Also check if a known noise string is a substring (handles doubled headers)
+      for (const noise of noisePara) {
+        if (noise.length > 5 && text.toLowerCase().includes(noise)) return false;
+      }
       return true;
     });
     return filtered.join('\n');
