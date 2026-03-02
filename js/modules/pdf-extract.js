@@ -159,65 +159,55 @@ async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal = n
   const healthResp = await fetchWithTimeout(`${serverUrl}/api/health`, {}, 5000, signal);
   if (!healthResp.ok) throw new Error('Server not reachable');
 
-  // Parallelize server OCR requests for faster throughput on large PDFs.
-  const concurrency = Math.min(4, totalPages);
+  // Pipeline: render pages serially (PDF.js is single-threaded) but fire off
+  // each server request immediately without waiting, so server OCR overlaps
+  // with rendering of the next page.
   const htmlByPage = new Array(totalPages).fill('');
-  let nextPage = 1;
   let completed = 0;
+  const serverPromises = [];
 
-  async function runWorker() {
-    while (true) {
-      await yieldToUi(signal);
-      const pageNum = nextPage;
-      nextPage += 1;
-      if (pageNum > totalPages) break;
-      throwIfAborted(signal);
+  for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+    await yieldToUi(signal);
+    throwIfAborted(signal);
 
-      // Render page to canvas (1.0x — scanned PDFs already have 150-300 DPI)
-      const page = await pdf.getPage(pageNum);
-      const viewport = page.getViewport({ scale: 1.0 });
-      const canvas = document.createElement('canvas');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      const ctx = canvas.getContext('2d');
-      await page.render({ canvasContext: ctx, viewport }).promise;
+    // Render page to canvas
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale: 1.0 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    throwIfAborted(signal);
 
-      // Send to server as JPEG base64
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    canvas.width = 0;
+    canvas.height = 0;
 
-      // Free canvas memory
-      canvas.width = 0;
-      canvas.height = 0;
-
-      const resp = await fetch(`${serverUrl}/api/ocr`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal,
-        body: JSON.stringify({
-          image: dataUrl,
-          session: sessionId,
-          page: pageNum,
-          totalPages
-        })
-      });
-
+    // Fire off server request without awaiting — overlaps with next render
+    const pNum = pageNum;
+    const p = fetch(`${serverUrl}/api/ocr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal,
+      body: JSON.stringify({ image: dataUrl, session: sessionId, page: pNum, totalPages })
+    }).then(async resp => {
       if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
       const { text } = await resp.json();
-
       if (text && text.trim()) {
         const paragraphs = text.trim().split(/\n\s*\n/).filter(p => p.trim());
         const html = paragraphs.map(p =>
           `<p>${escapeHtml(p.replace(/\n/g, ' ').trim())}</p>`
         ).join('\n');
-        if (html) htmlByPage[pageNum - 1] = html;
+        if (html) htmlByPage[pNum - 1] = html;
       }
-
       completed += 1;
       if (onProgress) onProgress(completed, totalPages, 'ocr');
-    }
+    });
+    serverPromises.push(p);
   }
 
-  await Promise.all(Array.from({ length: concurrency }, () => runWorker()));
+  await Promise.all(serverPromises);
   return htmlByPage.filter(Boolean).join('\n');
 }
 
