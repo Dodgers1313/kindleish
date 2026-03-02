@@ -25,7 +25,49 @@ _ocr_queue_count_lock = threading.Lock()
 SAVE_ENABLED = os.environ.get("OCR_SAVE_ENABLED", "1") != "0"
 SAVE_DIR = Path(os.environ.get("OCR_SAVE_DIR", "/data/ocr"))
 LIBRARY_DIR = Path(os.environ.get("LIBRARY_DIR", "/data/library"))
+KEYS_FILE = Path(os.environ.get("OCR_KEYS_FILE", "/data/ocr-keys.json"))
+MAX_PDF_SIZE = 250 * 1024 * 1024  # 250 MB
 WEB_ROOT = Path(__file__).resolve().parent
+_keys_lock = threading.Lock()
+
+
+def _init_keys():
+    """Create keys file with initial keys if it doesn't exist."""
+    if KEYS_FILE.exists():
+        return
+    KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    initial = {"test1": 3, "testa": 3, "test01": 3}
+    KEYS_FILE.write_text(json.dumps(initial), encoding="utf-8")
+
+
+def _check_key(key: str) -> bool:
+    """Check if a key is valid and has remaining uses."""
+    if not key:
+        return False
+    with _keys_lock:
+        if not KEYS_FILE.exists():
+            return False
+        keys = json.loads(KEYS_FILE.read_text(encoding="utf-8"))
+        return keys.get(key, 0) > 0
+
+
+def _use_key(key: str) -> bool:
+    """Decrement a key's remaining uses. Returns False if invalid/exhausted."""
+    if not key:
+        return False
+    with _keys_lock:
+        if not KEYS_FILE.exists():
+            return False
+        keys = json.loads(KEYS_FILE.read_text(encoding="utf-8"))
+        remaining = keys.get(key, 0)
+        if remaining <= 0:
+            return False
+        keys[key] = remaining - 1
+        KEYS_FILE.write_text(json.dumps(keys), encoding="utf-8")
+        return True
+
+
+_init_keys()
 OCR_FILE_RE = re.compile(
     r"^(?P<ts>\d{8}T\d{6}Z)_(?P<session>[A-Za-z0-9_-]+)_p(?P<page>\d{4})\.txt$"
 )
@@ -86,6 +128,15 @@ def ocr_queue_status():
         return jsonify({"waiting": _ocr_queue_count})
 
 
+@app.route("/api/ocr/validate-key", methods=["POST"])
+def validate_key():
+    data = request.json or {}
+    key = data.get("key", "").strip()
+    if _check_key(key):
+        return jsonify({"valid": True})
+    return jsonify({"valid": False}), 403
+
+
 @app.route("/api/ocr", methods=["POST"])
 def ocr():
     """Accept a base64-encoded page image, return OCR'd text and persist it."""
@@ -143,6 +194,11 @@ def ocr_pdf():
       {"page": i, "total": N, "text": "..."}   — page completed
       {"done": true, "pages": ["...", ...]}     — all done
     """
+    # Validate OCR key
+    ocr_key = request.headers.get("X-OCR-Key", "").strip()
+    if not _check_key(ocr_key):
+        return jsonify({"error": "Invalid or exhausted OCR key"}), 403
+
     data = request.json
     if not data or "pdf" not in data:
         return jsonify({"error": "Missing 'pdf' field"}), 400
@@ -152,6 +208,9 @@ def ocr_pdf():
         if "," in pdf_b64:
             pdf_b64 = pdf_b64.split(",", 1)[1]
         pdf_bytes = base64.b64decode(pdf_b64)
+
+        if len(pdf_bytes) > MAX_PDF_SIZE:
+            return jsonify({"error": f"PDF too large (max {MAX_PDF_SIZE // 1024 // 1024}MB)"}), 413
 
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         num_pages = len(doc)
@@ -191,6 +250,8 @@ def ocr_pdf():
             with _ocr_queue_count_lock:
                 _ocr_queue_count -= 1
 
+        # Decrement key only after successful completion
+        _use_key(ocr_key)
         yield json.dumps({"done": True, "pages": texts}) + "\n"
 
     return Response(

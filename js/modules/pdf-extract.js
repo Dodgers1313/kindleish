@@ -198,13 +198,22 @@ async function ocrPagesServer(pdf, blob, totalPages, onProgress, serverUrl, sign
 
   if (onProgress) onProgress(0, totalPages, 'ocr');
 
+  const ocrKey = localStorage.getItem('kindleish:ocr-key') || '';
   const resp = await fetch(`${serverUrl}/api/ocr/pdf`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-OCR-Key': ocrKey },
     signal,
     body: JSON.stringify({ pdf: pdfBase64, session: sessionId })
   });
 
+  if (resp.status === 403) {
+    const err = new Error('OCR_KEY_REQUIRED');
+    err.name = 'OcrKeyError';
+    throw err;
+  }
+  if (resp.status === 413) {
+    throw new Error('PDF is too large for server OCR (max 250MB)');
+  }
   if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
 
   // Read streaming NDJSON response for real-time progress

@@ -102,6 +102,12 @@ async function handleFile(file) {
     return;
   }
 
+  const MAX_SIZE = 250 * 1024 * 1024; // 250 MB
+  if (file.size > MAX_SIZE) {
+    alert(`File too large (${Math.round(file.size / 1024 / 1024)}MB). Maximum is 250MB.`);
+    return;
+  }
+
   showLoading('Processing PDF...');
 
   try {

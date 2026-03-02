@@ -10,6 +10,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/library.css">
   <link rel="stylesheet" href="css/reader.css">
 </head>
 <body class="theme-white">
@@ -102,6 +103,20 @@
         <button class="theme-swatch active" data-theme="white">White</button>
         <button class="theme-swatch" data-theme="sepia">Sepia</button>
         <button class="theme-swatch" data-theme="dark">Dark</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- OCR key dialog -->
+  <div id="ocr-key-dialog" class="dialog-overlay hidden">
+    <div class="dialog">
+      <p class="dialog-text">OCR Key Required</p>
+      <p class="dialog-subtext">This PDF needs OCR processing. Enter your key to continue.</p>
+      <input type="text" id="ocr-key-input" class="dialog-input" placeholder="Enter OCR key" autocomplete="off" autocapitalize="none">
+      <p id="ocr-key-error" class="dialog-subtext" style="color: #e74c3c; display: none;"></p>
+      <div class="dialog-actions">
+        <button id="ocr-key-cancel" class="dialog-btn">Cancel</button>
+        <button id="ocr-key-submit" class="dialog-btn dialog-btn-primary">Submit</button>
       </div>
     </div>
   </div>

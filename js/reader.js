@@ -30,6 +30,11 @@ const settingsPanel = document.getElementById('settings-panel');
 const fontDecrease = document.getElementById('font-decrease');
 const fontIncrease = document.getElementById('font-increase');
 const fontSizeValue = document.getElementById('font-size-value');
+const ocrKeyDialog = document.getElementById('ocr-key-dialog');
+const ocrKeyInput = document.getElementById('ocr-key-input');
+const ocrKeySubmit = document.getElementById('ocr-key-submit');
+const ocrKeyCancel = document.getElementById('ocr-key-cancel');
+const ocrKeyError = document.getElementById('ocr-key-error');
 
 let chromeVisible = false;
 let settingsVisible = false;
@@ -45,6 +50,51 @@ let bookBlob = null;
 
 function isAbortError(err) {
   return err?.name === 'AbortError' || err?.message === 'Operation canceled';
+}
+
+function showOcrKeyDialog() {
+  return new Promise(resolve => {
+    ocrKeyInput.value = '';
+    ocrKeyError.style.display = 'none';
+    ocrKeyDialog.classList.remove('hidden');
+    ocrKeyInput.focus();
+
+    function submit() {
+      const key = ocrKeyInput.value.trim();
+      if (!key) {
+        ocrKeyError.textContent = 'Please enter a key.';
+        ocrKeyError.style.display = '';
+        return;
+      }
+      // Validate key with server
+      const serverUrl = localStorage.getItem('kindleish:ocr-server') || '';
+      fetch(`${serverUrl}/api/ocr/validate-key`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key })
+      }).then(resp => {
+        if (resp.ok) {
+          ocrKeyDialog.classList.add('hidden');
+          resolve(key);
+        } else {
+          ocrKeyError.textContent = 'Invalid or exhausted key.';
+          ocrKeyError.style.display = '';
+        }
+      }).catch(() => {
+        ocrKeyError.textContent = 'Could not reach server.';
+        ocrKeyError.style.display = '';
+      });
+    }
+
+    function cancel() {
+      ocrKeyDialog.classList.add('hidden');
+      resolve(null);
+    }
+
+    ocrKeySubmit.onclick = submit;
+    ocrKeyCancel.onclick = cancel;
+    ocrKeyInput.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+  });
 }
 
 async function cancelExtraction() {
@@ -132,6 +182,19 @@ async function init() {
       if (extractionCancelled || isAbortError(err)) {
         window.location.href = 'index.html';
         return;
+      }
+      // OCR key required — prompt the user
+      if (err.name === 'OcrKeyError') {
+        const key = await showOcrKeyDialog();
+        if (key) {
+          localStorage.setItem('kindleish:ocr-key', key);
+          // Retry extraction with the new key
+          window.location.reload();
+          return;
+        } else {
+          window.location.href = 'index.html';
+          return;
+        }
       }
       console.error('Extraction failed:', err);
       extractProgress.textContent = 'Could not extract text from this PDF.';
