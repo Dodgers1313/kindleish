@@ -8,6 +8,7 @@ services:
     environment:
       OCR_SAVE_ENABLED: "1"
       OCR_SAVE_DIR: /data/ocr
+      OMP_THREAD_LIMIT: "1"
     volumes:
       - ./ocr-data:/data/ocr
     restart: unless-stopped
