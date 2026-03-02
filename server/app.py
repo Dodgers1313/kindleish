@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import pytesseract
 from PIL import Image
@@ -13,6 +13,7 @@ CORS(app)
 
 SAVE_ENABLED = os.environ.get("OCR_SAVE_ENABLED", "1") != "0"
 SAVE_DIR = Path(os.environ.get("OCR_SAVE_DIR", "/data/ocr"))
+WEB_ROOT = Path(__file__).resolve().parent
 
 
 def save_ocr_text(text: str, session: str | None, page: int | None) -> None:
@@ -55,6 +56,23 @@ def ocr():
         return jsonify({"text": text})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/", methods=["GET"])
+def web_index():
+    return send_from_directory(WEB_ROOT, "index.html")
+
+
+@app.route("/<path:asset_path>", methods=["GET"])
+def web_assets(asset_path: str):
+    # Keep API routes handled by their dedicated endpoints.
+    if asset_path.startswith("api/"):
+        return jsonify({"error": "Not found"}), 404
+
+    target = WEB_ROOT / asset_path
+    if target.exists() and target.is_file():
+        return send_from_directory(WEB_ROOT, asset_path)
+    return jsonify({"error": "Not found"}), 404
 
 
 if __name__ == "__main__":

@@ -5,10 +5,17 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY requirements.txt .
+COPY server/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py .
+COPY server/app.py ./app.py
+COPY index.html ./index.html
+COPY reader.html ./reader.html
+COPY manifest.json ./manifest.json
+COPY sw.js ./sw.js
+COPY css ./css
+COPY js ./js
+COPY icons ./icons
 
 EXPOSE 5000
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--timeout", "120", "app:app"]
