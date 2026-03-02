@@ -206,9 +206,43 @@ async function ocrPagesServer(pdf, blob, totalPages, onProgress, serverUrl, sign
   });
 
   if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
-  const { pages } = await resp.json();
+
+  // Read streaming NDJSON response for real-time progress
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalPages = null;
+
+  while (true) {
+    throwIfAborted(signal);
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // keep incomplete last line in buffer
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const msg = JSON.parse(line);
+        if (msg.done && msg.pages) {
+          finalPages = msg.pages;
+        } else if (msg.page !== undefined) {
+          if (onProgress) onProgress(msg.page, msg.total, 'ocr');
+        }
+      } catch (_) {}
+    }
+  }
+  // Process any remaining buffer
+  if (buffer.trim()) {
+    try {
+      const msg = JSON.parse(buffer);
+      if (msg.done && msg.pages) finalPages = msg.pages;
+    } catch (_) {}
+  }
+
+  if (!finalPages) throw new Error('No pages received from server');
   if (onProgress) onProgress(totalPages, totalPages, 'ocr');
-  return pagesToHtml(pages);
+  return pagesToHtml(finalPages);
 }
 
 // Client-side OCR using Tesseract.js (fallback)

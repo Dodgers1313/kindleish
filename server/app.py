@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
 import pytesseract
 from PIL import Image
@@ -136,7 +136,13 @@ def _render_and_ocr_page(args: tuple) -> tuple[int, str]:
 
 @app.route("/api/ocr/pdf", methods=["POST"])
 def ocr_pdf():
-    """Accept a base64-encoded PDF, render+OCR all pages in parallel with PyMuPDF."""
+    """Accept a base64-encoded PDF, render+OCR pages and stream progress as NDJSON.
+
+    Each line is a JSON object:
+      {"page": 0, "total": N}                  — queued/starting
+      {"page": i, "total": N, "text": "..."}   — page completed
+      {"done": true, "pages": ["...", ...]}     — all done
+    """
     data = request.json
     if not data or "pdf" not in data:
         return jsonify({"error": "Missing 'pdf' field"}), 400
@@ -154,29 +160,44 @@ def ocr_pdf():
         session = data.get("session")
         ocr_config = "--oem 1"
         cpu_count = os.cpu_count() or 4
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
+    def generate():
+        global _ocr_queue_count
         with _ocr_queue_count_lock:
             _ocr_queue_count += 1
+
+        # Send initial status so client knows total pages
+        yield json.dumps({"page": 0, "total": num_pages}) + "\n"
+
+        texts = [""] * num_pages
         try:
             with _ocr_lock:
+                completed = 0
                 with ThreadPoolExecutor(max_workers=cpu_count) as executor:
-                    results = list(executor.map(
-                        _render_and_ocr_page,
-                        [(pdf_bytes, i, ocr_config) for i in range(num_pages)]
-                    ))
+                    futures = {
+                        executor.submit(_render_and_ocr_page, (pdf_bytes, i, ocr_config)): i
+                        for i in range(num_pages)
+                    }
+                    from concurrent.futures import as_completed
+                    for future in as_completed(futures):
+                        page_num, text = future.result()
+                        texts[page_num] = text
+                        completed += 1
+                        save_ocr_text(text, session, page_num + 1)
+                        yield json.dumps({"page": completed, "total": num_pages}) + "\n"
         finally:
             with _ocr_queue_count_lock:
                 _ocr_queue_count -= 1
 
-        # results are (page_num, text) tuples, already in order from map()
-        texts = [text for _, text in results]
+        yield json.dumps({"done": True, "pages": texts}) + "\n"
 
-        for i, text in enumerate(texts):
-            save_ocr_text(text, session, i + 1)
-
-        return jsonify({"pages": texts})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return Response(
+        stream_with_context(generate()),
+        mimetype="application/x-ndjson",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}
+    )
 
 
 @app.route("/api/ocr/sessions", methods=["GET"])
