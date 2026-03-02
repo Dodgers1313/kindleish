@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kindleish-v15';
+const CACHE_NAME = 'kindleish-v16';
 const APP_SHELL = [
   '/',
   '/index.html',

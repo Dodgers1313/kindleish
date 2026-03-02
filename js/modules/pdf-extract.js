@@ -107,6 +107,7 @@ export async function extractBook(blob, onProgress, options = {}) {
           return await ocrPages(pdf, blob, totalPages, onProgress, signal);
         } catch (err) {
           if (isAbortError(err)) throw err;
+          if (err.name === 'OcrKeyError') throw err;
           console.warn('OCR failed, falling back to image mode:', err);
           return `<!--SCANNED:${totalPages}-->`;
         }
@@ -122,6 +123,7 @@ export async function extractBook(blob, onProgress, options = {}) {
       return await ocrPages(pdf, blob, totalPages, onProgress, signal);
     } catch (err) {
       if (isAbortError(err)) throw err;
+      if (err.name === 'OcrKeyError') throw err;
       console.warn('OCR failed, falling back to image mode:', err);
       return `<!--SCANNED:${totalPages}-->`;
     }
