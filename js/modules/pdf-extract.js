@@ -402,6 +402,8 @@ function reconstructText(items) {
   return blocks.map(block => {
     const text = escapeHtml(block.text.trim());
     if (!text) return '';
+    // Skip single-character blocks (PDF artifacts)
+    if (text.length === 1) return '';
     if (block.isHeading) {
       return `<h2>${text}</h2>`;
     }
@@ -441,6 +443,8 @@ function stripHeadersFooters(pageTexts) {
     return lines.filter(line => {
       const trimmed = line.trim();
       if (!trimmed) return true;
+      // Skip single-character lines (PDF artifacts)
+      if (trimmed.length === 1) return false;
       if (PAGE_NUM_RE.test(trimmed)) return false;
       if (noiseLines.has(trimmed.toLowerCase())) return false;
       return true;
@@ -480,6 +484,8 @@ function stripHtmlNoise(pagesHtml) {
   return parsedPages.map(parts => {
     const filtered = parts.filter(part => {
       const text = part.replace(/<[^>]*>/g, '').trim();
+      // Skip single-character blocks (PDF artifacts)
+      if (text.length === 1) return false;
       if (PAGE_NUM_RE.test(text)) return false;
       if (noisePara.has(text.toLowerCase())) return false;
       // Also check if a known noise string is a substring (handles doubled headers)
