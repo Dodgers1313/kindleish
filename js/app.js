@@ -184,7 +184,11 @@ function hideLoading() {
 
 // Render library
 async function renderLibrary() {
-  const books = await getAllBooks();
+  const books = (await getAllBooks()).filter(book => {
+    const id = String(book.id || '');
+    const title = String(book.title || '');
+    return !(id.startsWith('server-ocr-') || title.startsWith('Server OCR '));
+  });
 
   if (books.length === 0) {
     emptyState.classList.remove('hidden');
