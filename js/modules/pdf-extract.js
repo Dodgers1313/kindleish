@@ -115,7 +115,8 @@ export async function extractBook(blob, onProgress, options = {}) {
     }
   }
 
-  const combined = allHtml.join('');
+  const cleanedHtml = stripHtmlNoise(allHtml);
+  const combined = cleanedHtml.join('');
 
   const textLength = combined.replace(/<[^>]*>/g, '').trim().length;
   if (textLength < 100 && totalPages > 1) {
@@ -254,7 +255,7 @@ async function ocrPagesServer(pdf, blob, totalPages, onProgress, serverUrl, sign
 
   if (!finalPages) throw new Error('No pages received from server');
   if (onProgress) onProgress(totalPages, totalPages, 'ocr');
-  return pagesToHtml(finalPages);
+  return pagesToHtml(stripHeadersFooters(finalPages));
 }
 
 // Client-side OCR using Tesseract.js (fallback)
@@ -273,7 +274,7 @@ async function ocrPagesClient(pdf, totalPages, onProgress, signal = null) {
   };
   if (signal) signal.addEventListener('abort', abortWorker, { once: true });
 
-  const allHtml = [];
+  const allTexts = [];
 
   try {
     for (let i = 1; i <= totalPages; i++) {
@@ -294,14 +295,7 @@ async function ocrPagesClient(pdf, totalPages, onProgress, signal = null) {
       canvas.width = 0;
       canvas.height = 0;
 
-      const text = data.text.trim();
-      if (text) {
-        const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim());
-        const html = paragraphs.map(p =>
-          `<p>${escapeHtml(p.replace(/\n/g, ' ').trim())}</p>`
-        ).join('\n');
-        if (html) allHtml.push(html);
-      }
+      allTexts.push(data.text || '');
     }
   } catch (err) {
     if (signal?.aborted) throw createAbortError();
@@ -313,7 +307,7 @@ async function ocrPagesClient(pdf, totalPages, onProgress, signal = null) {
     } catch (_) {}
   }
 
-  return allHtml.join('\n');
+  return pagesToHtml(stripHeadersFooters(allTexts));
 }
 
 // Render a single PDF page to a canvas (called on demand by the reader)
@@ -413,6 +407,91 @@ function reconstructText(items) {
     }
     return `<p>${text}</p>`;
   }).join('\n');
+}
+
+// Page number pattern: standalone number, "Page N", "— N —", "- N -", "N of M"
+const PAGE_NUM_RE = /^\s*(?:page\s+)?\d+(?:\s+of\s+\d+)?\s*$|^\s*[-—]\s*\d+\s*[-—]\s*$/i;
+
+// Strip repeated headers/footers and page numbers from raw per-page text
+function stripHeadersFooters(pageTexts) {
+  if (pageTexts.length < 3) return pageTexts;
+
+  const edgeLines = new Map(); // line text → count of pages it appears on
+  const pageLines = pageTexts.map(t => (t || '').split('\n'));
+
+  // Collect first 2 and last 2 lines from each page, count frequency
+  for (const lines of pageLines) {
+    const seen = new Set();
+    const edges = lines.slice(0, 2).concat(lines.slice(-2));
+    for (const line of edges) {
+      const key = line.trim().toLowerCase();
+      if (key && key.length < 100 && !seen.has(key)) {
+        seen.add(key);
+        edgeLines.set(key, (edgeLines.get(key) || 0) + 1);
+      }
+    }
+  }
+
+  const threshold = pageTexts.length * 0.5;
+  const noiseLines = new Set();
+  for (const [line, count] of edgeLines) {
+    if (count >= threshold) noiseLines.add(line);
+  }
+
+  return pageLines.map(lines => {
+    // Only strip from first 2 and last 2 lines
+    const strip = (line, idx) => {
+      if (idx >= 2 && idx < lines.length - 2) return true; // keep middle lines
+      const trimmed = line.trim();
+      if (!trimmed) return true;
+      if (PAGE_NUM_RE.test(trimmed)) return false;
+      if (noiseLines.has(trimmed.toLowerCase())) return false;
+      return true;
+    };
+    return lines.filter(strip).join('\n');
+  });
+}
+
+// Strip page numbers and repeated noise from per-page HTML strings (for non-OCR path)
+function stripHtmlNoise(pagesHtml) {
+  if (pagesHtml.length < 3) return pagesHtml;
+
+  // Extract text from <p> tags, count frequency of short repeated paragraphs
+  const paraFreq = new Map();
+  const parsedPages = pagesHtml.map(html => {
+    const parts = html.split(/(?=<(?:p|h2)>)|(?<=<\/(?:p|h2)>)/);
+    return parts.filter(p => p.trim());
+  });
+
+  for (const parts of parsedPages) {
+    const seen = new Set();
+    // Check first 2 and last 2 elements
+    const edges = parts.slice(0, 2).concat(parts.slice(-2));
+    for (const part of edges) {
+      const text = part.replace(/<[^>]*>/g, '').trim().toLowerCase();
+      if (text && text.length < 100 && !seen.has(text)) {
+        seen.add(text);
+        paraFreq.set(text, (paraFreq.get(text) || 0) + 1);
+      }
+    }
+  }
+
+  const threshold = pagesHtml.length * 0.5;
+  const noisePara = new Set();
+  for (const [text, count] of paraFreq) {
+    if (count >= threshold) noisePara.add(text);
+  }
+
+  return parsedPages.map(parts => {
+    const filtered = parts.filter((part, idx) => {
+      if (idx >= 2 && idx < parts.length - 2) return true;
+      const text = part.replace(/<[^>]*>/g, '').trim();
+      if (PAGE_NUM_RE.test(text)) return false;
+      if (noisePara.has(text.toLowerCase())) return false;
+      return true;
+    });
+    return filtered.join('\n');
+  });
 }
 
 function escapeHtml(str) {
