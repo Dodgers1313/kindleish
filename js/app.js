@@ -1,5 +1,5 @@
 import { saveBook, getAllBooks, deleteBook, clearBookData, getPosition, savePosition, getBookmarks, saveBookmarks, getLibraryOrder, saveLibraryOrder } from './modules/storage.js';
-import { fetchLibrary, pushBookMeta, pushContent, deleteBookRemote } from './modules/sync.js';
+import { fetchLibrary, pushBookMeta, pushContent, deleteBookRemote, getUser } from './modules/sync.js';
 
 const fileInput = document.getElementById('file-input');
 const dropZone = document.getElementById('drop-zone');
@@ -16,6 +16,13 @@ const settingsDialog = document.getElementById('settings-dialog');
 const settingsCancel = document.getElementById('settings-cancel');
 const settingsSave = document.getElementById('settings-save');
 const ocrServerInput = document.getElementById('ocr-server-input');
+
+const userDialog = document.getElementById('user-dialog');
+const userNameInput = document.getElementById('user-name-input');
+const userSubmit = document.getElementById('user-submit');
+const userError = document.getElementById('user-error');
+
+const userBadge = document.getElementById('user-badge');
 
 let deleteTargetId = null;
 let longPressTimer = null;
@@ -342,11 +349,59 @@ async function cleanupServerOcrEntries() {
   saveLibraryOrder(cleanOrder);
 }
 
+// Username prompt
+function showUserDialog() {
+  return new Promise(resolve => {
+    userNameInput.value = '';
+    userError.style.display = 'none';
+    userDialog.classList.remove('hidden');
+    userNameInput.focus();
+
+    function submit() {
+      const name = userNameInput.value.trim().toLowerCase();
+      if (!name) {
+        userError.textContent = 'Please enter a name.';
+        userError.style.display = '';
+        return;
+      }
+      if (name.length < 2) {
+        userError.textContent = 'Name must be at least 2 characters.';
+        userError.style.display = '';
+        return;
+      }
+      localStorage.setItem('kindleish:user', name);
+      userDialog.classList.add('hidden');
+      resolve(name);
+    }
+
+    userSubmit.onclick = submit;
+    userNameInput.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+  });
+}
+
 // Register service worker
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
+// Show/update user badge
+function updateUserBadge() {
+  const user = getUser();
+  userBadge.textContent = user ? `(${user})` : '';
+}
+
+// Tap badge to switch user
+userBadge.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  await showUserDialog();
+  updateUserBadge();
+  renderLibrary();
+});
+
 // Init
+if (!getUser()) {
+  await showUserDialog();
+}
+updateUserBadge();
 await cleanupServerOcrEntries();
 renderLibrary();

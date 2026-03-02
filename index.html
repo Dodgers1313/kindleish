@@ -14,7 +14,7 @@
 </head>
 <body class="theme-white">
   <header class="library-header">
-    <h1 class="library-title">Kindleish</h1>
+    <h1 class="library-title">Kindleish <span id="user-badge" class="user-badge"></span></h1>
     <button id="settings-link" class="library-settings-btn" title="Settings">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"></circle>
@@ -76,6 +76,19 @@
       <div class="dialog-actions">
         <button id="delete-cancel" class="dialog-btn">Cancel</button>
         <button id="delete-confirm" class="dialog-btn dialog-btn-danger">Remove</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Username dialog -->
+  <div id="user-dialog" class="dialog-overlay hidden">
+    <div class="dialog">
+      <p class="dialog-text">What's your name?</p>
+      <p class="dialog-subtext">Type a unique name to access your personal library.</p>
+      <input type="text" id="user-name-input" class="dialog-input" placeholder="e.g. jeff" autocomplete="off" autocapitalize="none">
+      <p id="user-error" class="dialog-subtext" style="color: #e74c3c; display: none;"></p>
+      <div class="dialog-actions">
+        <button id="user-submit" class="dialog-btn dialog-btn-primary">Go</button>
       </div>
     </div>
   </div>

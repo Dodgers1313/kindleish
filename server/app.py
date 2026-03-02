@@ -185,9 +185,28 @@ def ocr_session_text(session: str):
 
 # --- Library sync endpoints ---
 
-def _book_dir(book_id: str) -> Path:
+def _get_user() -> str | None:
+    """Get the current user from the X-User header."""
+    user = request.headers.get("X-User", "").strip()
+    if not user:
+        return None
+    # Sanitize: lowercase, alphanumeric + hyphens/underscores only
+    return "".join(c for c in user.lower() if c.isalnum() or c in ("-", "_"))[:40] or None
+
+
+def _user_dir() -> Path | None:
+    user = _get_user()
+    if not user:
+        return None
+    return LIBRARY_DIR / user
+
+
+def _book_dir(book_id: str) -> Path | None:
+    udir = _user_dir()
+    if not udir:
+        return None
     safe_id = "".join(c for c in book_id if c.isalnum() or c in ("-", "_"))[:80]
-    return LIBRARY_DIR / safe_id
+    return udir / safe_id
 
 
 def _read_json(path: Path):
@@ -203,9 +222,12 @@ def _write_json(path: Path, data) -> None:
 
 @app.route("/api/library", methods=["GET"])
 def library_list():
+    udir = _user_dir()
+    if not udir:
+        return jsonify({"error": "X-User header required"}), 400
     books = []
-    if LIBRARY_DIR.exists():
-        for d in LIBRARY_DIR.iterdir():
+    if udir.exists():
+        for d in udir.iterdir():
             if not d.is_dir():
                 continue
             meta = _read_json(d / "meta.json")
@@ -225,8 +247,10 @@ def library_list():
 
 @app.route("/api/library/<book_id>", methods=["PUT"])
 def library_put(book_id: str):
-    data = request.json or {}
     d = _book_dir(book_id)
+    if not d:
+        return jsonify({"error": "X-User header required"}), 400
+    data = request.json or {}
     meta = {"title": data.get("title", ""), "addedAt": data.get("addedAt", 0),
             "pageCount": data.get("pageCount", 0)}
     _write_json(d / "meta.json", meta)
@@ -236,6 +260,8 @@ def library_put(book_id: str):
 @app.route("/api/library/<book_id>", methods=["DELETE"])
 def library_delete(book_id: str):
     d = _book_dir(book_id)
+    if not d:
+        return jsonify({"error": "X-User header required"}), 400
     if not d.exists():
         return jsonify({"error": "Not found"}), 404
     shutil.rmtree(d)
@@ -244,7 +270,10 @@ def library_delete(book_id: str):
 
 @app.route("/api/library/<book_id>/content", methods=["GET"])
 def library_content_get(book_id: str):
-    path = _book_dir(book_id) / "content.html"
+    d = _book_dir(book_id)
+    if not d:
+        return jsonify({"error": "X-User header required"}), 400
+    path = d / "content.html"
     if not path.exists():
         return jsonify({"error": "Not found"}), 404
     return path.read_text(encoding="utf-8"), 200, {"Content-Type": "text/html; charset=utf-8"}
@@ -253,6 +282,8 @@ def library_content_get(book_id: str):
 @app.route("/api/library/<book_id>/content", methods=["PUT"])
 def library_content_put(book_id: str):
     d = _book_dir(book_id)
+    if not d:
+        return jsonify({"error": "X-User header required"}), 400
     d.mkdir(parents=True, exist_ok=True)
     html = request.get_data(as_text=True)
     (d / "content.html").write_text(html, encoding="utf-8")
@@ -261,8 +292,10 @@ def library_content_put(book_id: str):
 
 @app.route("/api/library/<book_id>/position", methods=["PUT"])
 def library_position_put(book_id: str):
-    data = request.json or {}
     d = _book_dir(book_id)
+    if not d:
+        return jsonify({"error": "X-User header required"}), 400
+    data = request.json or {}
     d.mkdir(parents=True, exist_ok=True)
     path = d / "position.json"
     existing = _read_json(path)
@@ -274,10 +307,12 @@ def library_position_put(book_id: str):
 
 @app.route("/api/library/<book_id>/bookmarks", methods=["PUT"])
 def library_bookmarks_put(book_id: str):
+    d = _book_dir(book_id)
+    if not d:
+        return jsonify({"error": "X-User header required"}), 400
     data = request.json
     if data is None:
         data = []
-    d = _book_dir(book_id)
     d.mkdir(parents=True, exist_ok=True)
     _write_json(d / "bookmarks.json", data)
     return jsonify(data)

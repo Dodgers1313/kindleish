@@ -6,11 +6,19 @@ function getServerUrl() {
   return localStorage.getItem('kindleish:ocr-server') || '';
 }
 
+export function getUser() {
+  return localStorage.getItem('kindleish:user') || '';
+}
+
 async function api(path, options = {}) {
+  const user = getUser();
+  if (!user) return null; // no user set — skip sync
   try {
+    const headers = { ...options.headers, 'X-User': user };
     const resp = await fetch(`${getServerUrl()}${path}`, {
       signal: AbortSignal.timeout(options.timeout || 5000),
-      ...options
+      ...options,
+      headers
     });
     if (!resp.ok) return null;
     return resp;
