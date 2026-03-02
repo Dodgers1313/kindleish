@@ -377,6 +377,7 @@ function onPageChange(page, totalPages) {
 function onTypographyChange() {
   if (scannedMode) return; // typography changes don't affect scanned pages
   recalculate();
+  updateUI();
   updateSettingsUI();
 }
 
