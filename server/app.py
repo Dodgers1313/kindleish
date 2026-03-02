@@ -5,6 +5,7 @@ from PIL import Image
 import io
 import base64
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,6 +15,9 @@ CORS(app)
 SAVE_ENABLED = os.environ.get("OCR_SAVE_ENABLED", "1") != "0"
 SAVE_DIR = Path(os.environ.get("OCR_SAVE_DIR", "/data/ocr"))
 WEB_ROOT = Path(__file__).resolve().parent
+OCR_FILE_RE = re.compile(
+    r"^(?P<ts>\d{8}T\d{6}Z)_(?P<session>[A-Za-z0-9_-]+)_p(?P<page>\d{4})\.txt$"
+)
 
 
 def save_ocr_text(text: str, session: str | None, page: int | None) -> None:
@@ -26,6 +30,38 @@ def save_ocr_text(text: str, session: str | None, page: int | None) -> None:
     page_part = f"p{page:04d}" if isinstance(page, int) and page > 0 else "p0000"
     filename = f"{ts}_{safe_session}_{page_part}.txt"
     (SAVE_DIR / filename).write_text(text, encoding="utf-8")
+
+
+def get_saved_sessions() -> dict[str, dict]:
+    sessions: dict[str, dict] = {}
+    if not SAVE_DIR.exists():
+        return sessions
+
+    for file in SAVE_DIR.glob("*.txt"):
+        match = OCR_FILE_RE.match(file.name)
+        if not match:
+            continue
+
+        session = match.group("session")
+        page = int(match.group("page"))
+        ts = match.group("ts")
+        if session not in sessions:
+            sessions[session] = {
+                "session": session,
+                "files": [],
+                "first_ts": ts,
+                "last_ts": ts,
+            }
+        sessions[session]["files"].append((page, file))
+        if ts < sessions[session]["first_ts"]:
+            sessions[session]["first_ts"] = ts
+        if ts > sessions[session]["last_ts"]:
+            sessions[session]["last_ts"] = ts
+
+    for data in sessions.values():
+        data["files"].sort(key=lambda item: item[0])
+
+    return sessions
 
 
 @app.route("/api/health", methods=["GET"])
@@ -56,6 +92,63 @@ def ocr():
         return jsonify({"text": text})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ocr/sessions", methods=["GET"])
+def ocr_sessions():
+    sessions = get_saved_sessions()
+    out = []
+    for data in sessions.values():
+        out.append(
+            {
+                "session": data["session"],
+                "pages": len(data["files"]),
+                "first_ts": data["first_ts"],
+                "last_ts": data["last_ts"],
+            }
+        )
+    out.sort(key=lambda item: item["last_ts"], reverse=True)
+    return jsonify({"sessions": out})
+
+
+@app.route("/api/ocr/sessions/<session>/text", methods=["GET"])
+def ocr_session_text(session: str):
+    sessions = get_saved_sessions()
+    data = sessions.get(session)
+    if not data:
+        return jsonify({"error": "Session not found"}), 404
+
+    combined = []
+    for _, path in data["files"]:
+        combined.append(path.read_text(encoding="utf-8"))
+    return "".join(combined), 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+@app.route("/saved", methods=["GET"])
+def saved_sessions_page():
+    sessions = get_saved_sessions()
+    rows = []
+    for data in sorted(sessions.values(), key=lambda item: item["last_ts"], reverse=True):
+        sid = data["session"]
+        pages = len(data["files"])
+        last_ts = data["last_ts"]
+        rows.append(
+            f'<li><a href="/api/ocr/sessions/{sid}/text" target="_blank">{sid}</a> '
+            f"({pages} pages, last: {last_ts})</li>"
+        )
+
+    if not rows:
+        body = "<p>No saved OCR sessions yet.</p>"
+    else:
+        body = "<ul>" + "".join(rows) + "</ul>"
+
+    html = (
+        "<!doctype html><html><head><meta charset='utf-8'><title>Saved OCR</title></head>"
+        "<body><h1>Saved OCR Sessions</h1>"
+        "<p>Tap a session to open the OCR text.</p>"
+        f"{body}</body></html>"
+    )
+    return html
 
 
 @app.route("/", methods=["GET"])
