@@ -225,12 +225,26 @@ async function mergeWithServer(localBooks) {
     }
   }
 
-  // Local books not on server → push metadata + content in background
+  // Local books not on server → either push (new upload) or delete (removed on another device)
+  const toRemove = [];
   for (const local of localBooks) {
     if (!remoteMap.has(local.id)) {
-      pushBookMeta(local.id, { title: local.title, addedAt: local.addedAt, pageCount: local.pageCount || 0 });
-      if (local.extractedHtml) pushContent(local.id, local.extractedHtml);
+      if (local.blob) {
+        // Has a blob — freshly uploaded on this device, push to server
+        pushBookMeta(local.id, { title: local.title, addedAt: local.addedAt, pageCount: local.pageCount || 0 });
+        if (local.extractedHtml) pushContent(local.id, local.extractedHtml);
+      } else {
+        // No blob — was synced from server, now deleted remotely
+        await deleteBook(local.id);
+        clearBookData(local.id);
+        toRemove.push(local.id);
+      }
     }
+  }
+  if (toRemove.length > 0) {
+    localBooks = localBooks.filter(b => !toRemove.includes(b.id));
+    const cleanOrder = getLibraryOrder().filter(id => !toRemove.includes(id));
+    saveLibraryOrder(cleanOrder);
   }
 
   // Merge positions — use newer timestamp
