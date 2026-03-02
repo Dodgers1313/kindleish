@@ -1,4 +1,4 @@
-import { saveBook, getAllBooks, deleteBook, clearBookData, getPosition, getLibraryOrder, saveLibraryOrder } from './modules/storage.js';
+import { saveBook, getBook, getAllBooks, deleteBook, clearBookData, getPosition, getLibraryOrder, saveLibraryOrder } from './modules/storage.js';
 
 const fileInput = document.getElementById('file-input');
 const dropZone = document.getElementById('drop-zone');
@@ -267,10 +267,103 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+function parseCompactUtc(ts) {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(ts || '');
+  if (!m) return NaN;
+  return Date.UTC(
+    Number(m[1]),
+    Number(m[2]) - 1,
+    Number(m[3]),
+    Number(m[4]),
+    Number(m[5]),
+    Number(m[6])
+  );
+}
+
+function textToHtml(text) {
+  const paragraphs = (text || '')
+    .trim()
+    .split(/\n\s*\n/)
+    .map(p => p.replace(/\n/g, ' ').trim())
+    .filter(Boolean);
+  return paragraphs.map(p => `<p>${escapeHtml(p)}</p>`).join('\n');
+}
+
+async function syncServerOcrSessions() {
+  const serverUrl = (localStorage.getItem('kindleish:ocr-server') || '').replace(/\/+$/, '');
+  if (!serverUrl) return;
+
+  try {
+    const sessionsResp = await fetch(`${serverUrl}/api/ocr/sessions`, {
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!sessionsResp.ok) return;
+
+    const payload = await sessionsResp.json();
+    const sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
+    if (sessions.length === 0) return;
+
+    const order = getLibraryOrder();
+    let orderChanged = false;
+
+    for (const sessionInfo of sessions) {
+      const sessionId = sessionInfo.session;
+      if (!sessionId) continue;
+
+      const bookId = `server-ocr-${sessionId}`;
+      const syncStamp = `${sessionInfo.last_ts || ''}:${sessionInfo.pages || 0}`;
+      const existing = await getBook(bookId);
+
+      if (existing?.serverSyncStamp === syncStamp && existing?.extractedHtml) {
+        if (!order.includes(bookId)) {
+          order.unshift(bookId);
+          orderChanged = true;
+        }
+        continue;
+      }
+
+      const textResp = await fetch(`${serverUrl}/api/ocr/sessions/${encodeURIComponent(sessionId)}/text`, {
+        signal: AbortSignal.timeout(20000)
+      });
+      if (!textResp.ok) continue;
+
+      const text = await textResp.text();
+      const html = textToHtml(text);
+      if (!html) continue;
+
+      const tsMs = parseCompactUtc(sessionInfo.last_ts);
+      const titleDate = Number.isFinite(tsMs)
+        ? new Date(tsMs).toLocaleString()
+        : sessionId;
+
+      await saveBook({
+        id: bookId,
+        title: `Server OCR ${titleDate}`,
+        blob: null,
+        addedAt: Number.isFinite(tsMs) ? tsMs : Date.now(),
+        pageCount: sessionInfo.pages || 0,
+        extractedHtml: html,
+        serverSession: sessionId,
+        serverSyncStamp: syncStamp
+      });
+
+      if (!order.includes(bookId)) {
+        order.unshift(bookId);
+        orderChanged = true;
+      }
+    }
+
+    if (orderChanged) saveLibraryOrder(order);
+  } catch (err) {
+    console.warn('Could not sync server OCR sessions:', err);
+  }
+}
+
 // Register service worker
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
 // Init
+await syncServerOcrSessions();
 renderLibrary();
