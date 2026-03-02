@@ -6,7 +6,7 @@ import { restoreTheme, setTheme, getCurrentTheme } from './modules/themes.js';
 import { initTypography, increaseFontSize, decreaseFontSize, setFontFamily, setLineHeight, getFontSize, getFontFamily, getLineHeight } from './modules/typography.js';
 import { initBookmarks, toggleBookmark, isBookmarked } from './modules/bookmarks.js';
 import { initProgress, saveCurrentPosition, restorePosition } from './modules/progress.js';
-import { fetchContent, pushContent, pushBookMeta, fetchPosition } from './modules/sync.js';
+import { fetchContent, pushContent, pushBookMeta, fetchPosition, deleteBookRemote } from './modules/sync.js';
 
 // DOM elements
 const readerLoading = document.getElementById('reader-loading');
@@ -192,6 +192,10 @@ async function init() {
           window.location.reload();
           return;
         } else {
+          // Clean up the book since OCR was never completed
+          await deleteBook(bookId);
+          clearBookData(bookId);
+          deleteBookRemote(bookId);
           window.location.href = 'index.html';
           return;
         }
