@@ -26,6 +26,9 @@ export function initPaginator(opts = {}) {
 export function recalculate() {
   if (!container) return;
 
+  // Save reading position as percentage before repaginating
+  const savedPct = totalPages > 1 ? (currentPage - 1) / (totalPages - 1) : 0;
+
   // Reset transform to measure properly
   container.style.transition = 'none';
   container.style.transform = 'translateX(0)';
@@ -38,11 +41,11 @@ export function recalculate() {
   const scrollW = container.scrollWidth;
   totalPages = Math.max(1, Math.round(scrollW / pageWidth));
 
-  // Clamp current page
+  // Restore position by percentage (not raw page number)
+  currentPage = Math.max(1, Math.round(savedPct * (totalPages - 1)) + 1);
   if (currentPage > totalPages) currentPage = totalPages;
-  if (currentPage < 1) currentPage = 1;
 
-  // Re-enable transition and go to current page
+  // Re-enable transition and go to restored page
   requestAnimationFrame(() => {
     container.style.transition = '';
     goToPage(currentPage, false);
