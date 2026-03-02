@@ -1,4 +1,4 @@
-import { getBook, saveExtractedHtml } from './modules/storage.js';
+import { getBook, saveExtractedHtml, deleteBook, clearBookData } from './modules/storage.js';
 import { extractBook, renderPdfPage } from './modules/pdf-extract.js';
 import { initPaginator, goToPage, nextPage, prevPage, getCurrentPage, getTotalPages, getProgress, recalculate } from './modules/paginator.js';
 import { initGestures } from './modules/gestures.js';
@@ -46,10 +46,14 @@ function isAbortError(err) {
   return err?.name === 'AbortError' || err?.message === 'Operation canceled';
 }
 
-function cancelExtraction() {
+async function cancelExtraction() {
   if (!extractionAbortController) return;
   extractionCancelled = true;
   extractionAbortController.abort();
+  if (bookId) {
+    await deleteBook(bookId);
+    clearBookData(bookId);
+  }
   window.location.href = 'index.html';
 }
 
