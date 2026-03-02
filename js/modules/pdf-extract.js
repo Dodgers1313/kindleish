@@ -166,11 +166,13 @@ async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal = n
   let completed = 0;
   const serverPromises = [];
 
+  const t0 = performance.now();
   for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
     await yieldToUi(signal);
     throwIfAborted(signal);
 
     // Render page to canvas
+    const tRender = performance.now();
     const page = await pdf.getPage(pageNum);
     const viewport = page.getViewport({ scale: 1.0 });
     const canvas = document.createElement('canvas');
@@ -179,13 +181,17 @@ async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal = n
     const ctx = canvas.getContext('2d');
     await page.render({ canvasContext: ctx, viewport }).promise;
     throwIfAborted(signal);
+    console.log(`[OCR] p${pageNum} render: ${Math.round(performance.now()-tRender)}ms  canvas: ${canvas.width}x${canvas.height}`);
 
+    const tEncode = performance.now();
     const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    console.log(`[OCR] p${pageNum} encode: ${Math.round(performance.now()-tEncode)}ms  jpeg: ${Math.round(dataUrl.length/1024)}KB`);
     canvas.width = 0;
     canvas.height = 0;
 
     // Fire off server request without awaiting — overlaps with next render
     const pNum = pageNum;
+    const tFetch = performance.now();
     const p = fetch(`${serverUrl}/api/ocr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -201,6 +207,7 @@ async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal = n
         ).join('\n');
         if (html) htmlByPage[pNum - 1] = html;
       }
+      console.log(`[OCR] p${pNum} server: ${Math.round(performance.now()-tFetch)}ms`);
       completed += 1;
       if (onProgress) onProgress(completed, totalPages, 'ocr');
     });
@@ -208,6 +215,7 @@ async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal = n
   }
 
   await Promise.all(serverPromises);
+  console.log(`[OCR] total: ${Math.round(performance.now()-t0)}ms`);
   return htmlByPage.filter(Boolean).join('\n');
 }
 
