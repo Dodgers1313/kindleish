@@ -160,7 +160,7 @@ async function ocrPagesServer(pdf, totalPages, onProgress, serverUrl, signal = n
   if (!healthResp.ok) throw new Error('Server not reachable');
 
   // Parallelize server OCR requests for faster throughput on large PDFs.
-  const concurrency = Math.min(2, totalPages);
+  const concurrency = Math.min(4, totalPages);
   const htmlByPage = new Array(totalPages).fill('');
   let nextPage = 1;
   let completed = 0;

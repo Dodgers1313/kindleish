@@ -83,10 +83,10 @@ def ocr():
             img_data = img_data.split(",", 1)[1]
 
         image_bytes = base64.b64decode(img_data)
-        image = Image.open(io.BytesIO(image_bytes))
+        image = Image.open(io.BytesIO(image_bytes)).convert('L')
 
-        # Run Tesseract OCR
-        text = pytesseract.image_to_string(image)
+        # Run Tesseract OCR (LSTM-only engine, assume uniform text block)
+        text = pytesseract.image_to_string(image, config='--oem 1 --psm 6')
         save_ocr_text(text, data.get("session"), data.get("page"))
 
         return jsonify({"text": text})
