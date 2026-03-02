@@ -49,9 +49,8 @@ function isAbortError(err) {
 function cancelExtraction() {
   if (!extractionAbortController) return;
   extractionCancelled = true;
-  extractProgress.textContent = 'Canceling...';
-  extractCancel.disabled = true;
   extractionAbortController.abort();
+  window.location.href = 'index.html';
 }
 
 async function init() {
